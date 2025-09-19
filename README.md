@@ -9,4 +9,4 @@ Each incident includes details such as assigned units, location and type with va
 All data is exportable as PDF, xlsx or html.
 
 Allows the race track to keep a database of on track incidents for future reference.
-Database is built and utilized after first run locally.
+Database is built and utilized locally after the first run.
