@@ -1,2 +1,3 @@
 # IncidentDesk
-simple offline incident logging app for race control
+Simple offline incident logging app for race control
+Built with TKinter and SQLite
