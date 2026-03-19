@@ -1,7 +1,7 @@
 """
 Incident Desk - simple offline incident logging app for racetracks
 -----------------------------------------------------------------
-• Offline-first: SQLite file stored next to the script (trackincident.db)
+• Offline-first: SQLite file stored next to the script (incidentdesk.db)
 • Modern-ish Tkinter/ttk UI; color‑coded incident board
 • Add/Edit incidents with units (primary + backups) and time stamps
 • Filter/search by date, location, and incident type
