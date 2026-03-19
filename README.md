@@ -13,3 +13,8 @@ Allows the race track to keep a database of on track incidents for future refere
 Database is built and utilized locally after the first run.
 
 Designed for the dispatch and safety team at Road America.
+
+# Installation Guide
+1. Navigate to the latest release and the right side menu
+2. Under Assets: download IncidentDesk-Setup.exe
+3. Run the installer
