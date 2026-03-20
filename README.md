@@ -1,4 +1,4 @@
-# IncidentDesk
+# Incident Desk
 Simple offline incident logging app for race control
 Built with Python and SQLite
 
