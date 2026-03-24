@@ -1,11 +1,13 @@
 """
-Incident Desk - simple offline incident logging app for racetracks
+Incident Desk - simple offline incident logging app
+
+Developed by Ryder Smith 2025-2026
 -----------------------------------------------------------------
 • Offline-first: SQLite file stored next to the script (incidentdesk.db)
 • Modern-ish Tkinter/ttk UI; color‑coded incident board
-• Add/Edit incidents with units (primary + backups) and time stamps
+• Add/Edit incidents with units and time stamps
 • Filter/search by date, location, and incident type
-• Editable pick‑lists for Locations, Units, and Incident Types
+• Editable & Importable/Exportable pick‑lists for Locations, Units, and Incident Types
 • Notes per incident with automatic timestamps
 • Export board to Excel (xlsx) or CSV; export/print to PDF (via reportlab if installed)
 
