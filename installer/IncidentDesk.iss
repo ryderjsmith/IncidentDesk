@@ -1,7 +1,7 @@
 [Setup]
 AppName=Incident Desk
 AppVersion=1.0
-AppPublisher=Road America Race Control
+AppPublisher=
 AppPublisherURL=
 AppSupportURL=
 AppUpdatesURL=
