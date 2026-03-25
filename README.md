@@ -1,5 +1,6 @@
 # Incident Desk
-Simple offline incident logging app for race control
+Simple offline incident logging app 
+
 Built with Python and SQLite
 
 Users can log and track daily incidents that occur on track.
