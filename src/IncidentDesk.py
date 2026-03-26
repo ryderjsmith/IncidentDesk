@@ -1493,7 +1493,7 @@ class App(tk.Tk):
         if not rows:
             dark_info(self, "Nothing to show", "No incidents match the current filters.")
             return
-        out = Path.cwd() / "incident_board.html"
+        out = DB_DIR / "incident_board.html"
         self.exporter.export_printable_html(rows, out, title=self._export_title())
 
 
