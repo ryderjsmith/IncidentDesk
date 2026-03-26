@@ -1,5 +1,4 @@
-tkcalendar
-openpyxl
+PySide6
+xlsxwriter
 reportlab
-pillow
 pyinstaller

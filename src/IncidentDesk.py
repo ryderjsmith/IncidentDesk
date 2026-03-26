@@ -25,6 +25,17 @@ from datetime import datetime, date
 from pathlib import Path
 from typing import List, Optional, Tuple
 import sys
+import ctypes
+
+# Tell Windows this process is DPI-aware so it renders text crisply
+# instead of bitmap-scaling the entire window (which causes blur).
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
 
 import tkinter as tk
 from tkinter import ttk, filedialog
@@ -160,6 +171,7 @@ def position_on_parent(window, parent) -> None:
     x = px + (pw - ww) // 2 + offset
     y = py + (ph - wh) // 2 + offset
     window.geometry(f"+{x}+{y}")
+    window.deiconify()
     _cascade_count += 1
 
     def _on_destroy(e):
@@ -173,9 +185,9 @@ def position_on_parent(window, parent) -> None:
 def dark_info(parent, title: str, message: str) -> None:
     """Info dialog styled to match the rest of the app."""
     dlg = tk.Toplevel(parent)
+    dlg.withdraw()
     dlg.title(title)
     dlg.resizable(False, False)
-    dlg.grab_set()
     set_window_icon(dlg, "info")
     dlg.after(0, lambda: apply_dark_titlebar(dlg))
 
@@ -188,6 +200,7 @@ def dark_info(parent, title: str, message: str) -> None:
 
     dlg.transient(parent)
     position_on_parent(dlg, parent)
+    dlg.grab_set()
     dlg.wait_window()
 
 
@@ -196,9 +209,9 @@ def dark_confirm(parent, title: str, message: str) -> bool:
     result = [False]
 
     dlg = tk.Toplevel(parent)
+    dlg.withdraw()
     dlg.title(title)
     dlg.resizable(False, False)
-    dlg.grab_set()
     set_window_icon(dlg, "confirm")
     dlg.after(0, lambda: apply_dark_titlebar(dlg))
 
@@ -223,6 +236,7 @@ def dark_confirm(parent, title: str, message: str) -> bool:
 
     dlg.transient(parent)
     position_on_parent(dlg, parent)
+    dlg.grab_set()
     dlg.wait_window()
 
     return result[0]
@@ -231,7 +245,6 @@ def dark_confirm(parent, title: str, message: str) -> bool:
 def apply_dark_titlebar(window) -> None:
     """Enable dark title bar on Windows 10 (build 18985+) / Windows 11."""
     try:
-        import ctypes
         DWMWA_USE_IMMERSIVE_DARK_MODE = 20
         hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
         value = ctypes.c_int(1)
@@ -619,9 +632,9 @@ def ask_for_text(parent, title: str, initial: str = "") -> Optional[str]:
     result: list[Optional[str]] = [None]
 
     dlg = tk.Toplevel(parent)
+    dlg.withdraw()
     dlg.title(title)
     dlg.resizable(False, False)
-    dlg.grab_set()
     set_window_icon(dlg, "input")
     dlg.after(0, lambda: apply_dark_titlebar(dlg))
 
@@ -656,6 +669,7 @@ def ask_for_text(parent, title: str, initial: str = "") -> Optional[str]:
 
     dlg.transient(parent)
     position_on_parent(dlg, parent)
+    dlg.grab_set()
     dlg.wait_window()
 
     return result[0]
@@ -667,9 +681,9 @@ def ask_for_text(parent, title: str, initial: str = "") -> Optional[str]:
 class ListManager(tk.Toplevel):
     def __init__(self, master, db: DB, table: str):
         super().__init__(master)
+        self.withdraw()
         set_window_icon(self, {"units": "units", "locations": "locations", "incident_types": "types"}.get(table, "units"))
-        self.after(0, lambda: apply_dark_titlebar(self))
-        self.after(0, lambda: position_on_parent(self, master))
+        self.after(0, lambda: (apply_dark_titlebar(self), position_on_parent(self, master)))
         self.db = db
         self.table = table  # 'locations' | 'units' | 'incident_types'
         self.title(f"Manage {table.replace('_', ' ').title()}")
@@ -833,9 +847,9 @@ class ListManager(tk.Toplevel):
 class IncidentForm(tk.Toplevel):
     def __init__(self, master, db: DB, inc_id: Optional[int] = None, on_saved=None):
         super().__init__(master)
+        self.withdraw()
         set_window_icon(self, "incident_form")
-        self.after(0, lambda: apply_dark_titlebar(self))
-        self.after(0, lambda: position_on_parent(self, master))
+        self.after(0, lambda: (apply_dark_titlebar(self), position_on_parent(self, master)))
         self.db = db
         self.inc_id = inc_id
         self.on_saved = on_saved
@@ -1004,9 +1018,9 @@ class IncidentForm(tk.Toplevel):
 class NotesWindow(tk.Toplevel):
     def __init__(self, master, db: DB, inc_id: int):
         super().__init__(master)
+        self.withdraw()
         set_window_icon(self, "notes")
-        self.after(0, lambda: apply_dark_titlebar(self))
-        self.after(0, lambda: position_on_parent(self, master))
+        self.after(0, lambda: (apply_dark_titlebar(self), position_on_parent(self, master)))
         self.db = db
         self.inc_id = inc_id
         self.title("Incident Notes")
@@ -1550,6 +1564,7 @@ class App(tk.Tk):
 
     def _on_close(self):
         dlg = tk.Toplevel(self)
+        dlg.withdraw()
         dlg.title("Export Before Closing?")
         dlg.resizable(False, False)
         dlg.grab_set()
@@ -1593,6 +1608,7 @@ class App(tk.Tk):
 
     def _show_tutorial(self):
         win = tk.Toplevel(self)
+        win.withdraw()
         win.title("User Guide")
         win.geometry("860x780")
         win.minsize(700, 600)
