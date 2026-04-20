@@ -296,6 +296,7 @@ class DB:
                 arrived_at TEXT DEFAULT '',
                 cleared_at TEXT DEFAULT '',
                 disposition TEXT DEFAULT '',
+                car_number TEXT DEFAULT '',
                 is_cleared INTEGER DEFAULT 0,
                 FOREIGN KEY(location_id) REFERENCES locations(id)
             );
@@ -327,6 +328,7 @@ class DB:
             "ALTER TABLE locations ADD COLUMN sort_order INTEGER DEFAULT 0",
             "ALTER TABLE incident_types ADD COLUMN sort_order INTEGER DEFAULT 0",
             "ALTER TABLE units ADD COLUMN sort_order INTEGER DEFAULT 0",
+            "ALTER TABLE incidents ADD COLUMN car_number TEXT DEFAULT ''",
         ]:
             try:
                 cur.execute(stmt)
@@ -472,14 +474,15 @@ class DB:
     def create_incident(self, location_id: Optional[int], type_name: str, reported_at: str,
                          dispatched_at: str = "", arrived_at: str = "", cleared_at: str = "",
                          disposition: str = "", is_cleared: int = 0,
-                         primary_unit_id: Optional[int] = None, backup_unit_ids: Optional[List[int]] = None) -> int:
+                         primary_unit_id: Optional[int] = None, backup_unit_ids: Optional[List[int]] = None,
+                         car_number: str = "") -> int:
         cur = self.conn.cursor()
         cur.execute(
             """
-            INSERT INTO incidents(location_id, type, reported_at, dispatched_at, arrived_at, cleared_at, disposition, is_cleared)
-            VALUES(?,?,?,?,?,?,?,?)
+            INSERT INTO incidents(location_id, type, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, is_cleared)
+            VALUES(?,?,?,?,?,?,?,?,?)
             """,
-            (location_id, type_name, reported_at, dispatched_at, arrived_at, cleared_at, disposition, is_cleared),
+            (location_id, type_name, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, is_cleared),
         )
         inc_id = cur.lastrowid
         if primary_unit_id:
@@ -498,11 +501,12 @@ class DB:
 
     def update_incident(self, inc_id: int, location_id: Optional[int], type_name: str, reported_at: str,
                          dispatched_at: str, arrived_at: str, cleared_at: str, disposition: str, is_cleared: int,
-                         primary_unit_id: Optional[int], backup_unit_ids: List[int]):
+                         primary_unit_id: Optional[int], backup_unit_ids: List[int],
+                         car_number: str = ""):
         cur = self.conn.cursor()
         cur.execute(
-            "UPDATE incidents SET location_id=?, type=?, reported_at=?, dispatched_at=?, arrived_at=?, cleared_at=?, disposition=?, is_cleared=? WHERE id=?",
-            (location_id, type_name, reported_at, dispatched_at, arrived_at, cleared_at, disposition, is_cleared, inc_id),
+            "UPDATE incidents SET location_id=?, type=?, reported_at=?, dispatched_at=?, arrived_at=?, cleared_at=?, disposition=?, car_number=?, is_cleared=? WHERE id=?",
+            (location_id, type_name, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, is_cleared, inc_id),
         )
         # reset assignments
         cur.execute("DELETE FROM incident_units WHERE incident_id=?", (inc_id,))
@@ -854,13 +858,13 @@ class IncidentForm(tk.Toplevel):
         self.inc_id = inc_id
         self.on_saved = on_saved
         self.title("Incident Entry")
-        self.geometry("820x560")
+        self.geometry("820x610")
         self.transient(master)
         self.configure(padx=12, pady=12)
         self.resizable(False, False)
 
         # Layout grid
-        for i in range(6):
+        for i in range(7):
             self.grid_rowconfigure(i, pad=4)
         self.grid_columnconfigure(1, weight=1)
 
@@ -877,30 +881,34 @@ class IncidentForm(tk.Toplevel):
         self.type_cb.grid(row=1, column=1, sticky="ew", padx=(0, 6))
         ttk.Button(self, text="Manage", command=lambda: self._manage("incident_types")).grid(row=1, column=2, sticky="w")
 
+        ttk.Label(self, text="Car #").grid(row=2, column=0, sticky="w")
+        self.car_number_var = tk.StringVar()
+        ttk.Entry(self, textvariable=self.car_number_var).grid(row=2, column=1, sticky="ew", padx=(0, 6))
+
         # Times
         self.reported_var = tk.StringVar(value=now_dt_display())
         self.dispatched_var = tk.StringVar()
         self.arrived_var = tk.StringVar()
         self.cleared_var = tk.StringVar()
 
-        self._time_row("Reported", self.reported_var, row=2)
+        self._time_row("Reported", self.reported_var, row=3)
 
         # Primary Unit (directly under Reported)
         self.unit_map = {u["name"]: u["id"] for u in self.db.list_units()}
 
-        ttk.Label(self, text="Primary Unit").grid(row=3, column=0, sticky="w")
+        ttk.Label(self, text="Primary Unit").grid(row=4, column=0, sticky="w")
         self.primary_var = tk.StringVar()
         self.primary_cb = ttk.Combobox(self, textvariable=self.primary_var,
                                        values=self._available_unit_names(), state="readonly")
-        self.primary_cb.grid(row=3, column=1, sticky="ew")
+        self.primary_cb.grid(row=4, column=1, sticky="ew")
 
-        self._time_row("Dispatched", self.dispatched_var, row=4)
-        self._time_row("Arrived", self.arrived_var, row=5)
-        self._time_row("Cleared", self.cleared_var, row=6)
+        self._time_row("Dispatched", self.dispatched_var, row=5)
+        self._time_row("Arrived", self.arrived_var, row=6)
+        self._time_row("Cleared", self.cleared_var, row=7)
 
         # Notes live entry
         frame_notes = ttk.LabelFrame(self, text="Add Note (time-stamped)")
-        frame_notes.grid(row=7, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+        frame_notes.grid(row=8, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
         frame_notes.grid_columnconfigure(0, weight=1)
         self.note_text = tk.Text(frame_notes, height=4)
         self.note_text.grid(row=0, column=0, sticky="ew")
@@ -911,12 +919,12 @@ class IncidentForm(tk.Toplevel):
 
         # Bottom actions
         sep = ttk.Separator(self)
-        sep.grid(row=8, column=0, columnspan=3, sticky="ew", pady=6)
+        sep.grid(row=9, column=0, columnspan=3, sticky="ew", pady=6)
         self.cleared_var_bool = tk.IntVar(value=0)
         ttk.Checkbutton(self, text="Mark as Cleared", variable=self.cleared_var_bool,
-                        onvalue=1, offvalue=0).grid(row=9, column=0, sticky="w")
-        ttk.Button(self, text="Close", command=self.destroy).grid(row=9, column=1, sticky="e", padx=(0, 6))
-        ttk.Button(self, text="Save", command=self.save).grid(row=9, column=2, sticky="e")
+                        onvalue=1, offvalue=0).grid(row=10, column=0, sticky="w")
+        ttk.Button(self, text="Close", command=self.destroy).grid(row=10, column=1, sticky="e", padx=(0, 6))
+        ttk.Button(self, text="Save", command=self.save).grid(row=10, column=2, sticky="e")
 
         # Load existing
         if self.inc_id:
@@ -951,6 +959,7 @@ class IncidentForm(tk.Toplevel):
             if loc:
                 self.loc_var.set(loc)
         self.type_var.set(inc["type"])
+        self.car_number_var.set(inc["car_number"] or "")
         self.reported_var.set(fmt_dt(inc["reported_at"]))
         self.dispatched_var.set(fmt_dt(inc["dispatched_at"]))
         self.arrived_var.set(fmt_dt(inc["arrived_at"]))
@@ -1000,10 +1009,12 @@ class IncidentForm(tk.Toplevel):
         primary_name = self.primary_var.get().strip()
         primary_id = self.unit_map.get(primary_name)
 
+        car_number = self.car_number_var.get().strip()
+
         if self.inc_id:
-            self.db.update_incident(self.inc_id, loc_id, t_name, reported, disp, arr, clr, "", cleared_flag, primary_id, [])
+            self.db.update_incident(self.inc_id, loc_id, t_name, reported, disp, arr, clr, "", cleared_flag, primary_id, [], car_number)
         else:
-            self.inc_id = self.db.create_incident(loc_id, t_name, reported, disp, arr, clr, "", cleared_flag, primary_id, [])
+            self.inc_id = self.db.create_incident(loc_id, t_name, reported, disp, arr, clr, "", cleared_flag, primary_id, [], car_number)
 
         # Flush any pending note text now that inc_id is guaranteed to exist
         self._flush_note()
@@ -1072,7 +1083,7 @@ class Exporter:
         return "\n".join(f"{fmt_dt(n['ts'])}: {n['body']}" for n in notes)
 
     def export_excel(self, rows: List[sqlite3.Row], path: Path, parent=None):
-        headers = ["Reported", "Dispatched", "Arrived", "Cleared", "Type", "Location", "Unit", "Status", "Notes"]
+        headers = ["Reported", "Dispatched", "Arrived", "Cleared", "Type", "Location", "Car #", "Unit", "Status", "Notes"]
         try:
             import xlsxwriter  # type: ignore
         except Exception:
@@ -1084,7 +1095,7 @@ class Exporter:
                 for r in rows:
                     notes = self._notes_text(r["id"])
                     w.writerow([fmt_dt(r["reported_at"]), fmt_dt(r["dispatched_at"]), fmt_dt(r["arrived_at"]), fmt_dt(r["cleared_at"]),
-                                 r["type"], r["location_name"] or "", r["primary_units"] or "",
+                                 r["type"], r["location_name"] or "", r["car_number"] or "", r["primary_units"] or "",
                                  "Cleared" if r["is_cleared"] else "Active", notes])
             dark_info(parent, "Exported CSV", f"xlsxwriter not installed. Saved CSV instead to\n{csv_path}")
             return
@@ -1098,7 +1109,7 @@ class Exporter:
         odd_notes_fmt  = wb.add_format({'bg_color': '#FFFFFF', 'border': 1, 'valign': 'top', 'text_wrap': True})
         even_notes_fmt = wb.add_format({'bg_color': '#EBEBEB', 'border': 1, 'valign': 'top', 'text_wrap': True})
 
-        col_widths = [20, 20, 20, 20, 18, 22, 18, 10, 45]
+        col_widths = [20, 20, 20, 20, 18, 22, 10, 18, 10, 45]
         for c, (h, w) in enumerate(zip(headers, col_widths)):
             ws.write(0, c, h, hdr_fmt)
             ws.set_column(c, c, w)
@@ -1108,7 +1119,7 @@ class Exporter:
             notes_fmt = odd_notes_fmt  if r_idx % 2 else even_notes_fmt
             notes = self._notes_text(r["id"])
             values = [fmt_dt(r["reported_at"]), fmt_dt(r["dispatched_at"]), fmt_dt(r["arrived_at"]), fmt_dt(r["cleared_at"]),
-                      r["type"], r["location_name"] or "", r["primary_units"] or "",
+                      r["type"], r["location_name"] or "", r["car_number"] or "", r["primary_units"] or "",
                       "Cleared" if r["is_cleared"] else "Active"]
             for c, v in enumerate(values):
                 ws.write(r_idx, c, v, cell_fmt)
@@ -1144,19 +1155,19 @@ class Exporter:
         def P(text, style=cell_style):
             return Paragraph(str(text).replace("\n", "<br/>"), style)
 
-        headers = ["Reported", "Dispatched", "Arrived", "Cleared", "Type", "Location", "Unit", "Status", "Notes"]
+        headers = ["Reported", "Dispatched", "Arrived", "Cleared", "Type", "Location", "Car #", "Unit", "Status", "Notes"]
         data = [[P(h, hdr_style) for h in headers]]
         for r in rows:
             notes_text = self._notes_text(r["id"])
             data.append([
                 P(fmt_dt(r["reported_at"])), P(fmt_dt(r["dispatched_at"])), P(fmt_dt(r["arrived_at"])), P(fmt_dt(r["cleared_at"])),
-                P(r["type"]), P(r["location_name"] or ""), P(r["primary_units"] or ""),
+                P(r["type"]), P(r["location_name"] or ""), P(r["car_number"] or ""), P(r["primary_units"] or ""),
                 P("Cleared" if r["is_cleared"] else "Active"),
                 P(notes_text),
             ])
 
         # Landscape letter usable width ≈ 720pt (11in × 72 − 2×36 margins)
-        col_widths = [82, 78, 78, 78, 68, 82, 68, 46, 140]  # sum = 720
+        col_widths = [76, 72, 72, 72, 62, 78, 40, 62, 42, 144]  # sum = 720
         table = Table(data, colWidths=col_widths, repeatRows=1)
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#d0d0d0')),
@@ -1190,7 +1201,7 @@ body{{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:24px}}
 </style></head><body>
 <h2>{title}</h2>
 <table class='table'>
-<thead><tr><th>Reported</th><th>Dispatched</th><th>Arrived</th><th>Cleared</th><th>Type</th><th>Location</th><th>Unit</th><th>Status</th><th>Notes</th></tr></thead>
+<thead><tr><th>Reported</th><th>Dispatched</th><th>Arrived</th><th>Cleared</th><th>Type</th><th>Location</th><th>Car #</th><th>Unit</th><th>Status</th><th>Notes</th></tr></thead>
 <tbody>
 """)
             for r in rows:
@@ -1204,6 +1215,7 @@ body{{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:24px}}
                     f"<td>{fmt_dt(r['cleared_at'])}</td>"
                     f"<td>{html_lib.escape(r['type'])}</td>"
                     f"<td>{html_lib.escape(r['location_name'] or '')}</td>"
+                    f"<td>{html_lib.escape(r['car_number'] or '')}</td>"
                     f"<td>{html_lib.escape(r['primary_units'] or '')}</td>"
                     f"<td>{'Cleared' if r['is_cleared'] else 'Active'}</td>"
                     f"<td>{notes_html}</td>"
@@ -1223,8 +1235,8 @@ class App(tk.Tk):
         self.after(0, lambda: apply_dark_titlebar(self))
         self.db = DB()
         self.title(APP_TITLE)
-        self.geometry("1300x740")
-        self.minsize(980, 620)
+        self.geometry("1400x740")
+        self.minsize(1050, 620)
 
         try:
             self.style = ttk.Style(self)
@@ -1344,7 +1356,7 @@ class App(tk.Tk):
         frame = ttk.Frame(self, padding=(12, 0))
         frame.pack(fill="both", expand=True)
 
-        cols = ("reported", "dispatched", "arrived", "cleared", "type", "location", "units", "status")
+        cols = ("reported", "dispatched", "arrived", "cleared", "type", "location", "car", "units", "status")
         self.tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="browse")
         self.tree.heading("reported", text="Rec'd")
         self.tree.heading("dispatched", text="Disp")
@@ -1352,17 +1364,19 @@ class App(tk.Tk):
         self.tree.heading("cleared", text="Done")
         self.tree.heading("type", text="Type")
         self.tree.heading("location", text="Location")
+        self.tree.heading("car", text="Car #")
         self.tree.heading("units", text="Unit(s)")
         self.tree.heading("status", text="Status")
 
-        self.tree.column("reported", width=140)
-        self.tree.column("dispatched", width=120)
-        self.tree.column("arrived", width=120)
-        self.tree.column("cleared", width=120)
-        self.tree.column("type", width=120)
-        self.tree.column("location", width=160)
-        self.tree.column("units", width=220)
-        self.tree.column("status", width=90)
+        self.tree.column("reported",   width=140, anchor="center")
+        self.tree.column("dispatched", width=120, anchor="center")
+        self.tree.column("arrived",    width=120, anchor="center")
+        self.tree.column("cleared",    width=120, anchor="center")
+        self.tree.column("type",       width=120, anchor="center")
+        self.tree.column("location",   width=160, anchor="center")
+        self.tree.column("car",        width=70,  anchor="center")
+        self.tree.column("units",      width=140, anchor="center")
+        self.tree.column("status",     width=90,  anchor="center")
         self.tree.pack(fill="both", expand=True, side="left")
 
         # Row colors via tags
@@ -1412,7 +1426,7 @@ class App(tk.Tk):
             tag = 'cleared' if r["is_cleared"] else 'active'
             self.tree.insert("", "end", iid=str(r["id"]), values=(
                 fmt_dt(r["reported_at"]), fmt_dt(r["dispatched_at"]), fmt_dt(r["arrived_at"]), fmt_dt(r["cleared_at"]),
-                r["type"], r["location_name"] or "", units_label, "Cleared" if r["is_cleared"] else "Active"
+                r["type"], r["location_name"] or "", r["car_number"] or "", units_label, "Cleared" if r["is_cleared"] else "Active"
             ), tags=(tag,))
 
     def reset_filters(self):
