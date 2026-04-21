@@ -2,6 +2,7 @@
 build/
 dist/
 installer_output/
+img/
 __pycache__/
 *.pyc
 *.pyo
