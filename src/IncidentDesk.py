@@ -9,10 +9,7 @@ Developed by Ryder Smith 2025-2026
 • Filter/search by date, location, and incident type
 • Editable & Importable/Exportable pick‑lists for Locations, Units, and Incident Types
 • Notes per incident with automatic timestamps
-• Export board to Excel (xlsx) or CSV; export/print to PDF (via reportlab if installed)
-
-Optional exports (install if you want PDF/XLSX):
-py -m pip install reportlab xlsxwriter
+• Export board to Excel (xlsx) or CSV; export/print to PDF
 
 """
 from __future__ import annotations
@@ -20,6 +17,11 @@ import os
 import csv
 import json
 import sqlite3
+import subprocess
+import tempfile
+import threading
+import urllib.error
+import urllib.request
 import webbrowser
 from datetime import datetime, date
 from pathlib import Path
@@ -76,6 +78,8 @@ except Exception:
 
 DB_PATH = DB_DIR / "incidentdesk.db"
 APP_TITLE = "Road America – Race Control - Incident Desk"
+APP_VERSION = "1.3"                     # bump before cutting a new GitHub release
+GITHUB_REPO = "ryderjsmith/IncidentDesk"  # owner/repo for update checks
 _ico_candidates = [
     Path(getattr(sys, "_MEIPASS", "")) / "img" / "favicon.ico",  # PyInstaller bundle
     BASE_DIR.parent / "img" / "favicon.ico",                      # dev: src/../img/
@@ -255,6 +259,108 @@ def apply_dark_titlebar(window) -> None:
         )
     except Exception:
         pass
+
+
+# -----------------------------
+# Update checking (GitHub Releases)
+# -----------------------------
+def _parse_version(v: str) -> tuple:
+    """Turn 'v1.2.3' / '1.2.3-beta' into a comparable tuple (1, 2, 3)."""
+    s = v.lstrip("vV").split("-")[0].split("+")[0]
+    out = []
+    for p in s.split("."):
+        try:
+            out.append(int(p))
+        except ValueError:
+            out.append(0)
+    return tuple(out)
+
+
+def check_for_update() -> Optional[Tuple[str, str]]:
+    """Query GitHub for the latest release. Returns (tag, installer_url) if
+    newer than APP_VERSION, else None. Fails silently on network errors."""
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "IncidentDesk-Updater",
+        "Accept": "application/vnd.github+json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+        return None
+
+    tag = data.get("tag_name", "")
+    if not tag or _parse_version(tag) <= _parse_version(APP_VERSION):
+        return None
+
+    installer = next(
+        (a for a in data.get("assets", []) if a.get("name", "").lower().endswith("-setup.exe")),
+        None,
+    )
+    if not installer:
+        return None
+    return (tag, installer["browser_download_url"])
+
+
+def download_file(url: str, dest: Path) -> bool:
+    """Stream download to dest. Returns True on success."""
+    req = urllib.request.Request(url, headers={"User-Agent": "IncidentDesk-Updater"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp, open(dest, "wb") as f:
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                f.write(chunk)
+        return True
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+        return False
+
+
+def update_prompt(parent, current: str, latest: str) -> bool:
+    """Styled update-available dialog. Returns True if user chose Update Now."""
+    result = [False]
+
+    dlg = tk.Toplevel(parent)
+    dlg.withdraw()
+    dlg.title("Update Available")
+    dlg.resizable(False, False)
+    set_window_icon(dlg, "export")
+    dlg.after(0, lambda: apply_dark_titlebar(dlg))
+
+    outer = ttk.Frame(dlg, padding=20)
+    outer.pack(fill="both", expand=True)
+
+    message = (
+        f"Incident Desk {latest} is available.\n"
+        f"You are currently running {current}.\n\n"
+        "Would you like to download and install the update now?\n\n"
+        "Your incident data will be preserved automatically."
+    )
+    ttk.Label(outer, text=message, wraplength=380, justify="left").pack(anchor="w")
+    ttk.Separator(outer).pack(fill="x", pady=(16, 12))
+
+    btn_row = ttk.Frame(outer)
+    btn_row.pack(fill="x")
+
+    def _yes():
+        result[0] = True
+        dlg.destroy()
+
+    ttk.Button(btn_row, text="Later", command=dlg.destroy).pack(side="right", padx=(6, 0))
+    ttk.Button(btn_row, text="Update Now", style="Manage.TButton", command=_yes).pack(side="right")
+
+    dlg.bind("<Return>", lambda e: _yes())
+    dlg.bind("<Escape>", lambda e: dlg.destroy())
+
+    dlg.transient(parent)
+    position_on_parent(dlg, parent)
+    dlg.grab_set()
+    dlg.wait_window()
+
+    return result[0]
+
 
 # -----------------------------
 # Database
@@ -1377,6 +1483,10 @@ class App(tk.Tk):
         self._session_date = date.today()
         self.after(60000, self._check_date_rollover)
 
+        # Auto-check for updates (only when installed, not in dev)
+        if getattr(sys, "frozen", False):
+            self.after(1500, self._start_update_check)
+
     # ----- UI builders
     def _build_menu(self):
         menubar = tk.Menu(self)
@@ -1404,8 +1514,9 @@ class App(tk.Tk):
         # Help
         m_help = tk.Menu(menubar, tearoff=False)
         m_help.add_command(label="User Guide", command=self._show_tutorial)
+        m_help.add_command(label="Check for Updates", command=self._manual_update_check)
         m_help.add_separator()
-        m_help.add_command(label="About", command=lambda: dark_info(self, "About", "Simple offline incident board for race control\nBuilt with Python (Tkinter) + SQLite by Ryder Smith 2025-2026"))
+        m_help.add_command(label="About", command=lambda: dark_info(self, "About", f"Incident Desk {APP_VERSION}\nSimple offline incident board for race control\nBuilt with Python (Tkinter) + SQLite by Ryder Smith 2025-2026"))
         menubar.add_cascade(label="Help", menu=m_help)
         self.config(menu=menubar)
 
@@ -1680,6 +1791,73 @@ class App(tk.Tk):
             self._session_date = today
             self.reset_filters()
         self.after(60000, self._check_date_rollover)
+
+    # ----- Update checking
+    def _start_update_check(self, show_no_update: bool = False):
+        """Kick off a GitHub version check on a background thread."""
+        def worker():
+            result = check_for_update()
+            self.after(0, lambda: self._handle_update_result(result, show_no_update))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_update_result(self, result, show_no_update: bool):
+        if not self.winfo_exists():
+            return
+        if result is None:
+            if show_no_update:
+                dark_info(self, "No Updates",
+                          f"You are running the latest version (Incident Desk {APP_VERSION}).")
+            return
+        latest_tag, installer_url = result
+        if update_prompt(self, APP_VERSION, latest_tag):
+            self._download_and_install(installer_url)
+
+    def _manual_update_check(self):
+        """Triggered from Help > Check for Updates."""
+        self._start_update_check(show_no_update=True)
+
+    def _download_and_install(self, url: str):
+        """Show a modal 'downloading' dialog, fetch the installer, then run it."""
+        dlg = tk.Toplevel(self)
+        dlg.withdraw()
+        dlg.title("Updating")
+        dlg.resizable(False, False)
+        set_window_icon(dlg, "export")
+        dlg.after(0, lambda: apply_dark_titlebar(dlg))
+        dlg.protocol("WM_DELETE_WINDOW", lambda: None)  # disable close during download
+
+        outer = ttk.Frame(dlg, padding=24)
+        outer.pack(fill="both", expand=True)
+        ttk.Label(outer, text="Downloading update...\nThe app will restart when finished.",
+                  wraplength=320, justify="left").pack(anchor="w")
+
+        dlg.transient(self)
+        position_on_parent(dlg, self)
+        dlg.grab_set()
+
+        dest = Path(tempfile.gettempdir()) / "IncidentDesk-Setup.exe"
+
+        def worker():
+            ok = download_file(url, dest)
+            self.after(0, lambda: _finish(ok))
+
+        def _finish(ok: bool):
+            dlg.destroy()
+            if not ok:
+                dark_info(self, "Update Failed",
+                          "Could not download the update. Please check your connection and try again.")
+                return
+            # Launch installer detached so it survives this process exiting,
+            # then shut down so the installer can replace the exe.
+            DETACHED_PROCESS = 0x00000008
+            try:
+                subprocess.Popen([str(dest), "/SILENT"], creationflags=DETACHED_PROCESS)
+            except OSError as ex:
+                dark_info(self, "Update Failed", f"Could not launch installer:\n{ex}")
+                return
+            self.destroy()
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _on_close(self):
         dlg = tk.Toplevel(self)

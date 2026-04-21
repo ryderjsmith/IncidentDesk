@@ -1,6 +1,7 @@
 [Setup]
+AppId={{8A3B5C1E-7F42-4D8E-9A1B-6C3D2E4F5A6B}
 AppName=Incident Desk
-AppVersion=1.0
+AppVersion=1.3
 AppPublisher=
 AppPublisherURL=
 AppSupportURL=
@@ -17,6 +18,8 @@ WizardStyle=modern
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\IncidentDesk.exe
 UninstallDisplayName=Incident Desk
+CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
