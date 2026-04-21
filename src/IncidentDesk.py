@@ -98,6 +98,7 @@ def set_icon(window) -> None:
 _WINDOW_ICONS = {
     "incident_form": ("🚨", "#c0392b"),
     "notes":         ("📝", "#2980b9"),
+    "billables":     ("🧾", "#d4a74a"),
     "units":         ("🚗", "#27ae60"),
     "locations":     ("📍", "#8e44ad"),
     "types":         ("🏷", "#e67e22"),
@@ -317,6 +318,13 @@ class DB:
                 body TEXT NOT NULL,
                 FOREIGN KEY(incident_id) REFERENCES incidents(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS billables (
+                id INTEGER PRIMARY KEY,
+                incident_id INTEGER NOT NULL,
+                body TEXT NOT NULL,
+                FOREIGN KEY(incident_id) REFERENCES incidents(id) ON DELETE CASCADE
+            );
             """
         )
         self.conn.commit()
@@ -526,6 +534,13 @@ class DB:
 
     def list_notes(self, inc_id: int) -> List[sqlite3.Row]:
         return self.conn.execute("SELECT * FROM notes WHERE incident_id=? ORDER BY ts", (inc_id,)).fetchall()
+
+    def add_billable(self, inc_id: int, body: str):
+        self.conn.execute("INSERT INTO billables(incident_id, body) VALUES(?,?)", (inc_id, body))
+        self.conn.commit()
+
+    def list_billables(self, inc_id: int) -> List[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM billables WHERE incident_id=? ORDER BY id", (inc_id,)).fetchall()
 
     def set_cleared(self, inc_id: int, cleared: bool, cleared_at: Optional[str] = None):
         cur = self.conn.cursor()
@@ -858,7 +873,7 @@ class IncidentForm(tk.Toplevel):
         self.inc_id = inc_id
         self.on_saved = on_saved
         self.title("Incident Entry")
-        self.geometry("820x610")
+        self.geometry("820x570")
         self.transient(master)
         self.configure(padx=12, pady=12)
         self.resizable(False, False)
@@ -917,14 +932,24 @@ class IncidentForm(tk.Toplevel):
         ttk.Button(btns, text="Insert Time", command=lambda: self.note_text.insert(tk.END, now_dt_display()+" ")).grid(row=0, column=0, padx=4, pady=4)
         ttk.Button(btns, text="Save Note", command=self._save_quick_note).grid(row=1, column=0, padx=4)
 
+        # Billables live entry
+        frame_bill = ttk.LabelFrame(self, text="Add Billable")
+        frame_bill.grid(row=9, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+        frame_bill.grid_columnconfigure(0, weight=1)
+        self.bill_text = tk.Text(frame_bill, height=3)
+        self.bill_text.grid(row=0, column=0, sticky="ew")
+        btns_b = ttk.Frame(frame_bill)
+        btns_b.grid(row=0, column=1, sticky="ns")
+        ttk.Button(btns_b, text="Save Billable", command=self._save_quick_billable).grid(row=0, column=0, padx=4, pady=4)
+
         # Bottom actions
         sep = ttk.Separator(self)
-        sep.grid(row=9, column=0, columnspan=3, sticky="ew", pady=6)
+        sep.grid(row=10, column=0, columnspan=3, sticky="ew", pady=6)
         self.cleared_var_bool = tk.IntVar(value=0)
         ttk.Checkbutton(self, text="Mark as Cleared", variable=self.cleared_var_bool,
-                        onvalue=1, offvalue=0).grid(row=10, column=0, sticky="w")
-        ttk.Button(self, text="Close", command=self.destroy).grid(row=10, column=1, sticky="e", padx=(0, 6))
-        ttk.Button(self, text="Save", command=self.save).grid(row=10, column=2, sticky="e")
+                        onvalue=1, offvalue=0).grid(row=11, column=0, sticky="w")
+        ttk.Button(self, text="Close", command=self.destroy).grid(row=11, column=1, sticky="e", padx=(0, 6))
+        ttk.Button(self, text="Save", command=self.save).grid(row=11, column=2, sticky="e")
 
         # Load existing
         if self.inc_id:
@@ -989,6 +1014,23 @@ class IncidentForm(tk.Toplevel):
         self.db.add_note(self.inc_id, now_dt(), text)
         self.note_text.delete("1.0", tk.END)
 
+    def _flush_billable(self):
+        """Save any text currently in the billable area. inc_id must already be set."""
+        text = self.bill_text.get("1.0", tk.END).strip()
+        if text:
+            self.db.add_billable(self.inc_id, text)
+            self.bill_text.delete("1.0", tk.END)
+
+    def _save_quick_billable(self):
+        text = self.bill_text.get("1.0", tk.END).strip()
+        if not text:
+            return
+        if not self.inc_id:
+            self.save()
+            return
+        self.db.add_billable(self.inc_id, text)
+        self.bill_text.delete("1.0", tk.END)
+
     def save(self):
         # Map selections
         loc_name = self.loc_var.get().strip()
@@ -1018,6 +1060,7 @@ class IncidentForm(tk.Toplevel):
 
         # Flush any pending note text now that inc_id is guaranteed to exist
         self._flush_note()
+        self._flush_billable()
 
         if self.on_saved:
             self.on_saved()
@@ -1071,6 +1114,50 @@ class NotesWindow(tk.Toplevel):
 
 
 # -----------------------------
+# Billables viewer window
+# -----------------------------
+class BillablesWindow(tk.Toplevel):
+    def __init__(self, master, db: DB, inc_id: int):
+        super().__init__(master)
+        self.withdraw()
+        set_window_icon(self, "billables")
+        self.after(0, lambda: (apply_dark_titlebar(self), position_on_parent(self, master)))
+        self.db = db
+        self.inc_id = inc_id
+        self.title("Incident Billables")
+        self.geometry("640x420")
+        self.configure(padx=12, pady=12)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        self.entry = tk.Text(self, height=3)
+        self.entry.grid(row=0, column=0, sticky="ew")
+        btnbar = ttk.Frame(self)
+        btnbar.grid(row=0, column=1, sticky="ns")
+        ttk.Button(btnbar, text="Add Billable", command=self.add_billable).grid(row=0, column=0, padx=4, pady=4)
+
+        self.tree = ttk.Treeview(self, columns=("body",), show="headings")
+        self.tree.heading("body", text="Billable")
+        self.tree.column("body", width=580)
+        self.tree.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
+        self.refresh()
+
+    def refresh(self):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        for b in self.db.list_billables(self.inc_id):
+            self.tree.insert("", "end", values=(b["body"],))
+
+    def add_billable(self):
+        text = self.entry.get("1.0", tk.END).strip()
+        if not text:
+            return
+        self.db.add_billable(self.inc_id, text)
+        self.entry.delete("1.0", tk.END)
+        self.refresh()
+
+
+# -----------------------------
 # Export helpers
 # -----------------------------
 class Exporter:
@@ -1082,8 +1169,12 @@ class Exporter:
         notes = self.db.list_notes(inc_id)
         return "\n".join(f"{fmt_dt(n['ts'])}: {n['body']}" for n in notes)
 
+    def _billables_text(self, inc_id: int) -> str:
+        """Return all billables for an incident as plain text, one per line."""
+        return "\n".join(b["body"] for b in self.db.list_billables(inc_id))
+
     def export_excel(self, rows: List[sqlite3.Row], path: Path, parent=None):
-        headers = ["Reported", "Dispatched", "Arrived", "Cleared", "Type", "Location", "Car #", "Unit", "Status", "Notes"]
+        headers = ["Reported", "Dispatched", "Arrived", "Cleared", "Type", "Location", "Car #", "Unit", "Status", "Notes", "Billables"]
         try:
             import xlsxwriter  # type: ignore
         except Exception:
@@ -1094,9 +1185,10 @@ class Exporter:
                 w.writerow(headers)
                 for r in rows:
                     notes = self._notes_text(r["id"])
+                    billables = self._billables_text(r["id"])
                     w.writerow([fmt_dt(r["reported_at"]), fmt_dt(r["dispatched_at"]), fmt_dt(r["arrived_at"]), fmt_dt(r["cleared_at"]),
                                  r["type"], r["location_name"] or "", r["car_number"] or "", r["primary_units"] or "",
-                                 "Cleared" if r["is_cleared"] else "Active", notes])
+                                 "Cleared" if r["is_cleared"] else "Active", notes, billables])
             dark_info(parent, "Exported CSV", f"xlsxwriter not installed. Saved CSV instead to\n{csv_path}")
             return
 
@@ -1109,7 +1201,7 @@ class Exporter:
         odd_notes_fmt  = wb.add_format({'bg_color': '#FFFFFF', 'border': 1, 'valign': 'top', 'text_wrap': True})
         even_notes_fmt = wb.add_format({'bg_color': '#EBEBEB', 'border': 1, 'valign': 'top', 'text_wrap': True})
 
-        col_widths = [20, 20, 20, 20, 18, 22, 10, 18, 10, 45]
+        col_widths = [20, 20, 20, 20, 18, 22, 10, 18, 10, 45, 35]
         for c, (h, w) in enumerate(zip(headers, col_widths)):
             ws.write(0, c, h, hdr_fmt)
             ws.set_column(c, c, w)
@@ -1118,14 +1210,16 @@ class Exporter:
             cell_fmt  = odd_fmt        if r_idx % 2 else even_fmt
             notes_fmt = odd_notes_fmt  if r_idx % 2 else even_notes_fmt
             notes = self._notes_text(r["id"])
+            billables = self._billables_text(r["id"])
             values = [fmt_dt(r["reported_at"]), fmt_dt(r["dispatched_at"]), fmt_dt(r["arrived_at"]), fmt_dt(r["cleared_at"]),
                       r["type"], r["location_name"] or "", r["car_number"] or "", r["primary_units"] or "",
                       "Cleared" if r["is_cleared"] else "Active"]
             for c, v in enumerate(values):
                 ws.write(r_idx, c, v, cell_fmt)
             ws.write(r_idx, len(values), notes, notes_fmt)
-            if notes:
-                line_count = notes.count("\n") + 1
+            ws.write(r_idx, len(values) + 1, billables, notes_fmt)
+            if notes or billables:
+                line_count = max(notes.count("\n"), billables.count("\n")) + 1
                 ws.set_row(r_idx, max(20, min(line_count * 15, 120)))
 
         ws.autofilter(0, 0, len(rows), len(headers) - 1)
@@ -1155,19 +1249,21 @@ class Exporter:
         def P(text, style=cell_style):
             return Paragraph(str(text).replace("\n", "<br/>"), style)
 
-        headers = ["Reported", "Dispatched", "Arrived", "Cleared", "Type", "Location", "Car #", "Unit", "Status", "Notes"]
+        headers = ["Reported", "Dispatched", "Arrived", "Cleared", "Type", "Location", "Car #", "Unit", "Status", "Notes", "Billables"]
         data = [[P(h, hdr_style) for h in headers]]
         for r in rows:
             notes_text = self._notes_text(r["id"])
+            billables_text = self._billables_text(r["id"])
             data.append([
                 P(fmt_dt(r["reported_at"])), P(fmt_dt(r["dispatched_at"])), P(fmt_dt(r["arrived_at"])), P(fmt_dt(r["cleared_at"])),
                 P(r["type"]), P(r["location_name"] or ""), P(r["car_number"] or ""), P(r["primary_units"] or ""),
                 P("Cleared" if r["is_cleared"] else "Active"),
                 P(notes_text),
+                P(billables_text),
             ])
 
         # Landscape letter usable width ≈ 720pt (11in × 72 − 2×36 margins)
-        col_widths = [76, 72, 72, 72, 62, 78, 40, 62, 42, 144]  # sum = 720
+        col_widths = [70, 66, 66, 66, 56, 72, 38, 56, 40, 100, 90]  # sum = 720
         table = Table(data, colWidths=col_widths, repeatRows=1)
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#d0d0d0')),
@@ -1201,12 +1297,14 @@ body{{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:24px}}
 </style></head><body>
 <h2>{title}</h2>
 <table class='table'>
-<thead><tr><th>Reported</th><th>Dispatched</th><th>Arrived</th><th>Cleared</th><th>Type</th><th>Location</th><th>Car #</th><th>Unit</th><th>Status</th><th>Notes</th></tr></thead>
+<thead><tr><th>Reported</th><th>Dispatched</th><th>Arrived</th><th>Cleared</th><th>Type</th><th>Location</th><th>Car #</th><th>Unit</th><th>Status</th><th>Notes</th><th>Billables</th></tr></thead>
 <tbody>
 """)
             for r in rows:
                 notes_text = self._notes_text(r["id"])
+                billables_text = self._billables_text(r["id"])
                 notes_html = f"<span class='notes'>{html_lib.escape(notes_text)}</span>" if notes_text else ""
+                billables_html = f"<span class='notes'>{html_lib.escape(billables_text)}</span>" if billables_text else ""
                 f.write(
                     f"<tr>"
                     f"<td>{fmt_dt(r['reported_at'])}</td>"
@@ -1219,6 +1317,7 @@ body{{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:24px}}
                     f"<td>{html_lib.escape(r['primary_units'] or '')}</td>"
                     f"<td>{'Cleared' if r['is_cleared'] else 'Active'}</td>"
                     f"<td>{notes_html}</td>"
+                    f"<td>{billables_html}</td>"
                     f"</tr>\n"
                 )
             f.write("</tbody></table></body></html>\n")
@@ -1390,8 +1489,9 @@ class App(tk.Tk):
         ttk.Separator(side).pack(fill="x", pady=4)
         ttk.Button(side, text="View/Edit", command=self.edit_selected).pack(fill="x", pady=6)
         ttk.Button(side, text="Notes", command=self.open_notes).pack(fill="x", pady=6)
+        ttk.Button(side, text="Billables", command=self.open_billables).pack(fill="x", pady=6)
         ttk.Button(side, text="Toggle Cleared", command=self.mark_cleared).pack(fill="x", pady=6)
-        ttk.Button(side, text="Delete", command=self.delete_selected).pack(fill="x", pady=6)
+        ttk.Button(side, text="Delete", style="Danger.TButton", command=self.delete_selected).pack(fill="x", pady=6)
         ttk.Separator(side).pack(fill="x", pady=8)
         ttk.Button(side, text="Export Excel", command=self.export_excel).pack(fill="x", pady=6)
         ttk.Button(side, text="Export PDF", command=self.export_pdf).pack(fill="x", pady=6)
@@ -1455,6 +1555,11 @@ class App(tk.Tk):
         iid = self.get_selected_incident_id()
         if iid:
             NotesWindow(self, self.db, inc_id=iid)
+
+    def open_billables(self):
+        iid = self.get_selected_incident_id()
+        if iid:
+            BillablesWindow(self, self.db, inc_id=iid)
 
     def mark_cleared(self):
         iid = self.get_selected_incident_id()
