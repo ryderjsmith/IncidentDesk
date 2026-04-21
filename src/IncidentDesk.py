@@ -78,7 +78,7 @@ except Exception:
 
 DB_PATH = DB_DIR / "incidentdesk.db"
 APP_TITLE = "Road America – Race Control - Incident Desk"
-APP_VERSION = "1.3"                     # bump before cutting a new GitHub release
+APP_VERSION = "1.4"                     # bump before cutting a new GitHub release
 GITHUB_REPO = "ryderjsmith/IncidentDesk"  # owner/repo for update checks
 _ico_candidates = [
     Path(getattr(sys, "_MEIPASS", "")) / "img" / "favicon.ico",  # PyInstaller bundle
