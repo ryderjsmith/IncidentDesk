@@ -209,7 +209,11 @@ def dark_info(parent, title: str, message: str) -> None:
     dlg.wait_window()
 
 
-def dark_confirm(parent, title: str, message: str) -> bool:
+def dark_confirm(parent, title: str, message: str, *,
+                 yes_text: str = "Yes", no_text: str = "No",
+                 yes_style: str = "Danger.TButton",
+                 icon_key: str = "confirm",
+                 wraplength: int = 320) -> bool:
     """Styled Yes/No confirmation dialog. Returns True if the user clicked Yes."""
     result = [False]
 
@@ -217,13 +221,13 @@ def dark_confirm(parent, title: str, message: str) -> bool:
     dlg.withdraw()
     dlg.title(title)
     dlg.resizable(False, False)
-    set_window_icon(dlg, "confirm")
+    set_window_icon(dlg, icon_key)
     dlg.after(0, lambda: apply_dark_titlebar(dlg))
 
     outer = ttk.Frame(dlg, padding=20)
     outer.pack(fill="both", expand=True)
 
-    ttk.Label(outer, text=message, wraplength=320, justify="left").pack(anchor="w")
+    ttk.Label(outer, text=message, wraplength=wraplength, justify="left").pack(anchor="w")
     ttk.Separator(outer).pack(fill="x", pady=(16, 12))
 
     btn_row = ttk.Frame(outer)
@@ -233,8 +237,8 @@ def dark_confirm(parent, title: str, message: str) -> bool:
         result[0] = True
         dlg.destroy()
 
-    ttk.Button(btn_row, text="No",  command=dlg.destroy).pack(side="right", padx=(6, 0))
-    ttk.Button(btn_row, text="Yes", style="Danger.TButton", command=_yes).pack(side="right")
+    ttk.Button(btn_row, text=no_text,  command=dlg.destroy).pack(side="right", padx=(6, 0))
+    ttk.Button(btn_row, text=yes_text, style=yes_style, command=_yes).pack(side="right")
 
     dlg.bind("<Return>", lambda e: _yes())
     dlg.bind("<Escape>", lambda e: dlg.destroy())
@@ -320,46 +324,18 @@ def download_file(url: str, dest: Path) -> bool:
 
 def update_prompt(parent, current: str, latest: str) -> bool:
     """Styled update-available dialog. Returns True if user chose Update Now."""
-    result = [False]
-
-    dlg = tk.Toplevel(parent)
-    dlg.withdraw()
-    dlg.title("Update Available")
-    dlg.resizable(False, False)
-    set_window_icon(dlg, "export")
-    dlg.after(0, lambda: apply_dark_titlebar(dlg))
-
-    outer = ttk.Frame(dlg, padding=20)
-    outer.pack(fill="both", expand=True)
-
     message = (
         f"Incident Desk {latest} is available.\n"
         f"You are currently running {current}.\n\n"
         "Would you like to download and install the update now?\n\n"
         "Your incident data will be preserved automatically."
     )
-    ttk.Label(outer, text=message, wraplength=380, justify="left").pack(anchor="w")
-    ttk.Separator(outer).pack(fill="x", pady=(16, 12))
-
-    btn_row = ttk.Frame(outer)
-    btn_row.pack(fill="x")
-
-    def _yes():
-        result[0] = True
-        dlg.destroy()
-
-    ttk.Button(btn_row, text="Later", command=dlg.destroy).pack(side="right", padx=(6, 0))
-    ttk.Button(btn_row, text="Update Now", style="Manage.TButton", command=_yes).pack(side="right")
-
-    dlg.bind("<Return>", lambda e: _yes())
-    dlg.bind("<Escape>", lambda e: dlg.destroy())
-
-    dlg.transient(parent)
-    position_on_parent(dlg, parent)
-    dlg.grab_set()
-    dlg.wait_window()
-
-    return result[0]
+    return dark_confirm(
+        parent, "Update Available", message,
+        yes_text="Update Now", no_text="Later",
+        yes_style="Manage.TButton", icon_key="export",
+        wraplength=380,
+    )
 
 
 # -----------------------------
@@ -1824,7 +1800,7 @@ class App(tk.Tk):
         dlg.resizable(False, False)
         set_window_icon(dlg, "export")
         dlg.after(0, lambda: apply_dark_titlebar(dlg))
-        dlg.protocol("WM_DELETE_WINDOW", lambda: None)  # disable close during download
+        dlg.protocol("WM_DELETE_WINDOW", lambda: None)
 
         outer = ttk.Frame(dlg, padding=24)
         outer.pack(fill="both", expand=True)
@@ -1836,9 +1812,15 @@ class App(tk.Tk):
         dlg.grab_set()
 
         dest = Path(tempfile.gettempdir()) / "IncidentDesk-Setup.exe"
+        part = dest.with_suffix(dest.suffix + ".part")
 
         def worker():
-            ok = download_file(url, dest)
+            ok = download_file(url, part)
+            if ok:
+                try:
+                    os.replace(part, dest)
+                except OSError:
+                    ok = False
             self.after(0, lambda: _finish(ok))
 
         def _finish(ok: bool):
@@ -1849,9 +1831,9 @@ class App(tk.Tk):
                 return
             # Launch installer detached so it survives this process exiting,
             # then shut down so the installer can replace the exe.
-            DETACHED_PROCESS = 0x00000008
             try:
-                subprocess.Popen([str(dest), "/SILENT"], creationflags=DETACHED_PROCESS)
+                subprocess.Popen([str(dest), "/SILENT"],
+                                 creationflags=subprocess.DETACHED_PROCESS)
             except OSError as ex:
                 dark_info(self, "Update Failed", f"Could not launch installer:\n{ex}")
                 return
