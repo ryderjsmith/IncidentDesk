@@ -1,7 +1,7 @@
 [Setup]
 AppId={{8A3B5C1E-7F42-4D8E-9A1B-6C3D2E4F5A6B}
 AppName=Incident Desk
-AppVersion=1.4
+AppVersion=1.5
 AppPublisher=
 AppPublisherURL=
 AppSupportURL=
