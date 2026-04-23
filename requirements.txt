@@ -1,4 +1,4 @@
-PySide6
-xlsxwriter
+tkcalendar
+pillow
 reportlab
 pyinstaller

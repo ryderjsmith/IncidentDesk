@@ -9,12 +9,11 @@ Developed by Ryder Smith 2025-2026
 • Filter/search by date, location, and incident type
 • Editable & Importable/Exportable pick‑lists for Locations, Units, and Incident Types
 • Notes per incident with automatic timestamps
-• Export board to Excel (xlsx) or CSV; export/print to PDF
+• Export board to PDF (via reportlab)
 
 """
 from __future__ import annotations
 import os
-import csv
 import json
 import sqlite3
 import subprocess
@@ -22,7 +21,6 @@ import tempfile
 import threading
 import urllib.error
 import urllib.request
-import webbrowser
 from datetime import datetime, date
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -103,9 +101,10 @@ _WINDOW_ICONS = {
     "incident_form": ("🚨", "#c0392b"),
     "notes":         ("📝", "#2980b9"),
     "billables":     ("🧾", "#d4a74a"),
-    "units":         ("🚗", "#27ae60"),
+    "units":         ("🚒", "#27ae60"),
     "locations":     ("📍", "#8e44ad"),
     "types":         ("🏷", "#e67e22"),
+    "driver_codes":  ("🏎", "#16a085"),
     "info":          ("ℹ",  "#2980b9"),
     "confirm":       ("⚠",  "#e67e22"),
     "input":         ("✏",  "#16a085"),
@@ -370,6 +369,12 @@ class DB:
                 name TEXT NOT NULL UNIQUE
             );
 
+            CREATE TABLE IF NOT EXISTS driver_codes (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                sort_order INTEGER DEFAULT 0
+            );
+
             CREATE TABLE IF NOT EXISTS incidents (
                 id INTEGER PRIMARY KEY,
                 location_id INTEGER,
@@ -380,6 +385,7 @@ class DB:
                 cleared_at TEXT DEFAULT '',
                 disposition TEXT DEFAULT '',
                 car_number TEXT DEFAULT '',
+                driver_code TEXT DEFAULT '',
                 is_cleared INTEGER DEFAULT 0,
                 FOREIGN KEY(location_id) REFERENCES locations(id)
             );
@@ -419,6 +425,7 @@ class DB:
             "ALTER TABLE incident_types ADD COLUMN sort_order INTEGER DEFAULT 0",
             "ALTER TABLE units ADD COLUMN sort_order INTEGER DEFAULT 0",
             "ALTER TABLE incidents ADD COLUMN car_number TEXT DEFAULT ''",
+            "ALTER TABLE incidents ADD COLUMN driver_code TEXT DEFAULT ''",
         ]:
             try:
                 cur.execute(stmt)
@@ -428,6 +435,7 @@ class DB:
         cur.execute("UPDATE locations SET sort_order = id WHERE sort_order = 0")
         cur.execute("UPDATE incident_types SET sort_order = id WHERE sort_order = 0")
         cur.execute("UPDATE units SET sort_order = id WHERE sort_order = 0")
+        cur.execute("UPDATE driver_codes SET sort_order = id WHERE sort_order = 0")
         self.conn.commit()
 
     # ---- CRUD helpers
@@ -526,7 +534,7 @@ class DB:
 
     def set_sort_order(self, table: str, ordered_ids: list):
         """Assign sort_order 1..N to rows in the given order."""
-        if table not in ("locations", "units", "incident_types"):
+        if table not in ("locations", "units", "incident_types", "driver_codes"):
             raise ValueError(f"unknown table: {table}")
         cur = self.conn.cursor()
         for idx, row_id in enumerate(ordered_ids, start=1):
@@ -546,18 +554,42 @@ class DB:
         self.conn.execute("DELETE FROM incident_types WHERE id=?", (type_id,))
         self.conn.commit()
 
+    def list_driver_codes(self) -> List[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM driver_codes ORDER BY sort_order, id").fetchall()
+
+    def add_driver_code(self, name: str):
+        self.conn.execute(
+            "INSERT OR IGNORE INTO driver_codes(name, sort_order) "
+            "VALUES(?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM driver_codes))",
+            (name.strip(),),
+        )
+        self.conn.commit()
+
+    def rename_driver_code(self, code_id: int, new_name: str):
+        self.conn.execute("UPDATE driver_codes SET name=? WHERE id=?", (new_name.strip(), code_id))
+        self.conn.commit()
+
+    def driver_code_incident_count(self, code_name: str) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM incidents WHERE driver_code=?", (code_name,)
+        ).fetchone()[0]
+
+    def delete_driver_code(self, code_id: int):
+        self.conn.execute("DELETE FROM driver_codes WHERE id=?", (code_id,))
+        self.conn.commit()
+
     def create_incident(self, location_id: Optional[int], type_name: str, reported_at: str,
                          dispatched_at: str = "", arrived_at: str = "", cleared_at: str = "",
                          disposition: str = "", is_cleared: int = 0,
                          primary_unit_id: Optional[int] = None, backup_unit_ids: Optional[List[int]] = None,
-                         car_number: str = "") -> int:
+                         car_number: str = "", driver_code: str = "") -> int:
         cur = self.conn.cursor()
         cur.execute(
             """
-            INSERT INTO incidents(location_id, type, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, is_cleared)
-            VALUES(?,?,?,?,?,?,?,?,?)
+            INSERT INTO incidents(location_id, type, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, driver_code, is_cleared)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
             """,
-            (location_id, type_name, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, is_cleared),
+            (location_id, type_name, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, driver_code, is_cleared),
         )
         inc_id = cur.lastrowid
         if primary_unit_id:
@@ -577,11 +609,11 @@ class DB:
     def update_incident(self, inc_id: int, location_id: Optional[int], type_name: str, reported_at: str,
                          dispatched_at: str, arrived_at: str, cleared_at: str, disposition: str, is_cleared: int,
                          primary_unit_id: Optional[int], backup_unit_ids: List[int],
-                         car_number: str = ""):
+                         car_number: str = "", driver_code: str = ""):
         cur = self.conn.cursor()
         cur.execute(
-            "UPDATE incidents SET location_id=?, type=?, reported_at=?, dispatched_at=?, arrived_at=?, cleared_at=?, disposition=?, car_number=?, is_cleared=? WHERE id=?",
-            (location_id, type_name, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, is_cleared, inc_id),
+            "UPDATE incidents SET location_id=?, type=?, reported_at=?, dispatched_at=?, arrived_at=?, cleared_at=?, disposition=?, car_number=?, driver_code=?, is_cleared=? WHERE id=?",
+            (location_id, type_name, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, driver_code, is_cleared, inc_id),
         )
         # reset assignments
         cur.execute("DELETE FROM incident_units WHERE incident_id=?", (inc_id,))
@@ -768,10 +800,10 @@ class ListManager(tk.Toplevel):
     def __init__(self, master, db: DB, table: str):
         super().__init__(master)
         self.withdraw()
-        set_window_icon(self, {"units": "units", "locations": "locations", "incident_types": "types"}.get(table, "units"))
+        set_window_icon(self, {"units": "units", "locations": "locations", "incident_types": "types", "driver_codes": "driver_codes"}.get(table, "units"))
         self.after(0, lambda: (apply_dark_titlebar(self), position_on_parent(self, master)))
         self.db = db
-        self.table = table  # 'locations' | 'units' | 'incident_types'
+        self.table = table
         self.title(f"Manage {table.replace('_', ' ').title()}")
         self.geometry("600x460")
         self.resizable(False, False)
@@ -821,6 +853,9 @@ class ListManager(tk.Toplevel):
         elif self.table == "incident_types":
             for r in self.db.list_incident_types():
                 self.tree.insert("", "end", iid=str(r["id"]), values=(r["name"], handle))
+        elif self.table == "driver_codes":
+            for r in self.db.list_driver_codes():
+                self.tree.insert("", "end", iid=str(r["id"]), values=(r["name"], handle))
         else:  # units
             for r in self.db.list_units_with_availability():
                 tag = "available" if r["available"] else "unavailable"
@@ -838,6 +873,8 @@ class ListManager(tk.Toplevel):
                 return
             if self.table == "locations":
                 self.db.add_location(name)
+            elif self.table == "driver_codes":
+                self.db.add_driver_code(name)
             else:
                 self.db.add_incident_type(name)
         self.refresh()
@@ -859,6 +896,12 @@ class ListManager(tk.Toplevel):
             if new is None:
                 return
             self.db.rename_location(iid, new)
+        elif self.table == "driver_codes":
+            old = self.tree.item(sel, "values")[0]
+            new = ask_for_text(self, "Rename driver code", old)
+            if new is None:
+                return
+            self.db.rename_driver_code(iid, new)
         else:
             old = self.tree.item(sel, "values")[0]
             new = ask_for_text(self, "Rename incident type", old)
@@ -909,6 +952,8 @@ class ListManager(tk.Toplevel):
             count = self.db.unit_incident_count(iid)
         elif self.table == "locations":
             count = self.db.location_incident_count(iid)
+        elif self.table == "driver_codes":
+            count = self.db.driver_code_incident_count(name)
         else:
             count = self.db.incident_type_incident_count(name)
 
@@ -925,6 +970,8 @@ class ListManager(tk.Toplevel):
             self.db.delete_unit(iid)
         elif self.table == "locations":
             self.db.delete_location(iid)
+        elif self.table == "driver_codes":
+            self.db.delete_driver_code(iid)
         else:
             self.db.delete_incident_type(iid)
         self.refresh()
@@ -943,32 +990,39 @@ class IncidentForm(tk.Toplevel):
         self.inc_id = inc_id
         self.on_saved = on_saved
         self.title("Incident Entry")
-        self.geometry("820x570")
+        self.geometry("820x605")
         self.transient(master)
         self.configure(padx=12, pady=12)
         self.resizable(False, False)
 
         # Layout grid
-        for i in range(7):
+        for i in range(8):
             self.grid_rowconfigure(i, pad=4)
         self.grid_columnconfigure(1, weight=1)
 
+        ttk.Label(self, text="Driver Code").grid(row=0, column=0, sticky="w")
+        self.driver_code_var = tk.StringVar()
+        self.driver_code_cb = ttk.Combobox(self, textvariable=self.driver_code_var,
+                                           values=[r["name"] for r in self.db.list_driver_codes()], state="readonly")
+        self.driver_code_cb.grid(row=0, column=1, sticky="ew", padx=(0, 6))
+        ttk.Button(self, text="Manage", command=lambda: self._manage("driver_codes")).grid(row=0, column=2, sticky="w")
+
         # Location & Type
-        ttk.Label(self, text="Location").grid(row=0, column=0, sticky="w")
+        ttk.Label(self, text="Location").grid(row=1, column=0, sticky="w")
         self.loc_var = tk.StringVar()
         self.loc_cb = ttk.Combobox(self, textvariable=self.loc_var, values=[r["name"] for r in self.db.list_locations()], state="readonly")
-        self.loc_cb.grid(row=0, column=1, sticky="ew", padx=(0, 6))
-        ttk.Button(self, text="Manage", command=lambda: self._manage("locations")).grid(row=0, column=2, sticky="w")
+        self.loc_cb.grid(row=1, column=1, sticky="ew", padx=(0, 6))
+        ttk.Button(self, text="Manage", command=lambda: self._manage("locations")).grid(row=1, column=2, sticky="w")
 
-        ttk.Label(self, text="Incident Type").grid(row=1, column=0, sticky="w")
+        ttk.Label(self, text="Incident Type").grid(row=2, column=0, sticky="w")
         self.type_var = tk.StringVar()
         self.type_cb = ttk.Combobox(self, textvariable=self.type_var, values=[r["name"] for r in self.db.list_incident_types()], state="readonly")
-        self.type_cb.grid(row=1, column=1, sticky="ew", padx=(0, 6))
-        ttk.Button(self, text="Manage", command=lambda: self._manage("incident_types")).grid(row=1, column=2, sticky="w")
+        self.type_cb.grid(row=2, column=1, sticky="ew", padx=(0, 6))
+        ttk.Button(self, text="Manage", command=lambda: self._manage("incident_types")).grid(row=2, column=2, sticky="w")
 
-        ttk.Label(self, text="Car #").grid(row=2, column=0, sticky="w")
+        ttk.Label(self, text="Car #").grid(row=3, column=0, sticky="w")
         self.car_number_var = tk.StringVar()
-        ttk.Entry(self, textvariable=self.car_number_var).grid(row=2, column=1, sticky="ew", padx=(0, 6))
+        ttk.Entry(self, textvariable=self.car_number_var).grid(row=3, column=1, sticky="ew", padx=(0, 6))
 
         # Times
         self.reported_var = tk.StringVar(value=now_dt_display())
@@ -976,24 +1030,24 @@ class IncidentForm(tk.Toplevel):
         self.arrived_var = tk.StringVar()
         self.cleared_var = tk.StringVar()
 
-        self._time_row("Reported", self.reported_var, row=3)
+        self._time_row("Reported", self.reported_var, row=4)
 
         # Primary Unit (directly under Reported)
         self.unit_map = {u["name"]: u["id"] for u in self.db.list_units()}
 
-        ttk.Label(self, text="Primary Unit").grid(row=4, column=0, sticky="w")
+        ttk.Label(self, text="Primary Unit").grid(row=5, column=0, sticky="w")
         self.primary_var = tk.StringVar()
         self.primary_cb = ttk.Combobox(self, textvariable=self.primary_var,
                                        values=self._available_unit_names(), state="readonly")
-        self.primary_cb.grid(row=4, column=1, sticky="ew")
+        self.primary_cb.grid(row=5, column=1, sticky="ew")
 
-        self._time_row("Dispatched", self.dispatched_var, row=5)
-        self._time_row("Arrived", self.arrived_var, row=6)
-        self._time_row("Cleared", self.cleared_var, row=7)
+        self._time_row("Dispatched", self.dispatched_var, row=6)
+        self._time_row("Arrived", self.arrived_var, row=7)
+        self._time_row("Cleared", self.cleared_var, row=8)
 
         # Notes live entry
         frame_notes = ttk.LabelFrame(self, text="Add Note (time-stamped)")
-        frame_notes.grid(row=8, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+        frame_notes.grid(row=9, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
         frame_notes.grid_columnconfigure(0, weight=1)
         self.note_text = tk.Text(frame_notes, height=4)
         self.note_text.grid(row=0, column=0, sticky="ew")
@@ -1004,7 +1058,7 @@ class IncidentForm(tk.Toplevel):
 
         # Billables live entry
         frame_bill = ttk.LabelFrame(self, text="Add Billable")
-        frame_bill.grid(row=9, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+        frame_bill.grid(row=10, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
         frame_bill.grid_columnconfigure(0, weight=1)
         self.bill_text = tk.Text(frame_bill, height=3)
         self.bill_text.grid(row=0, column=0, sticky="ew")
@@ -1014,12 +1068,12 @@ class IncidentForm(tk.Toplevel):
 
         # Bottom actions
         sep = ttk.Separator(self)
-        sep.grid(row=10, column=0, columnspan=3, sticky="ew", pady=6)
+        sep.grid(row=11, column=0, columnspan=3, sticky="ew", pady=6)
         self.cleared_var_bool = tk.IntVar(value=0)
         ttk.Checkbutton(self, text="Mark as Cleared", variable=self.cleared_var_bool,
-                        onvalue=1, offvalue=0).grid(row=11, column=0, sticky="w")
-        ttk.Button(self, text="Close", command=self.destroy).grid(row=11, column=1, sticky="e", padx=(0, 6))
-        ttk.Button(self, text="Save", command=self.save).grid(row=11, column=2, sticky="e")
+                        onvalue=1, offvalue=0).grid(row=12, column=0, sticky="w")
+        ttk.Button(self, text="Close", command=self.destroy).grid(row=12, column=1, sticky="e", padx=(0, 6))
+        ttk.Button(self, text="Save", command=self.save).grid(row=12, column=2, sticky="e")
 
         # Load existing
         if self.inc_id:
@@ -1037,6 +1091,7 @@ class IncidentForm(tk.Toplevel):
     def _refresh_combos(self):
         self.loc_cb["values"] = [r["name"] for r in self.db.list_locations()]
         self.type_cb["values"] = [r["name"] for r in self.db.list_incident_types()]
+        self.driver_code_cb["values"] = [r["name"] for r in self.db.list_driver_codes()]
         self.unit_map = {u["name"]: u["id"] for u in self.db.list_units()}
         self.primary_cb["values"] = self._available_unit_names()
 
@@ -1055,6 +1110,7 @@ class IncidentForm(tk.Toplevel):
                 self.loc_var.set(loc)
         self.type_var.set(inc["type"])
         self.car_number_var.set(inc["car_number"] or "")
+        self.driver_code_var.set(inc["driver_code"] or "")
         self.reported_var.set(fmt_dt(inc["reported_at"]))
         self.dispatched_var.set(fmt_dt(inc["dispatched_at"]))
         self.arrived_var.set(fmt_dt(inc["arrived_at"]))
@@ -1122,11 +1178,12 @@ class IncidentForm(tk.Toplevel):
         primary_id = self.unit_map.get(primary_name)
 
         car_number = self.car_number_var.get().strip()
+        driver_code = self.driver_code_var.get().strip()
 
         if self.inc_id:
-            self.db.update_incident(self.inc_id, loc_id, t_name, reported, disp, arr, clr, "", cleared_flag, primary_id, [], car_number)
+            self.db.update_incident(self.inc_id, loc_id, t_name, reported, disp, arr, clr, "", cleared_flag, primary_id, [], car_number, driver_code)
         else:
-            self.inc_id = self.db.create_incident(loc_id, t_name, reported, disp, arr, clr, "", cleared_flag, primary_id, [], car_number)
+            self.inc_id = self.db.create_incident(loc_id, t_name, reported, disp, arr, clr, "", cleared_flag, primary_id, [], car_number, driver_code)
 
         # Flush any pending note text now that inc_id is guaranteed to exist
         self._flush_note()
@@ -1243,59 +1300,6 @@ class Exporter:
         """Return all billables for an incident as plain text, one per line."""
         return "\n".join(b["body"] for b in self.db.list_billables(inc_id))
 
-    def export_excel(self, rows: List[sqlite3.Row], path: Path, parent=None):
-        headers = ["Reported", "Dispatched", "Arrived", "Cleared", "Type", "Location", "Car #", "Unit", "Status", "Notes", "Billables"]
-        try:
-            import xlsxwriter  # type: ignore
-        except Exception:
-            # fallback to CSV
-            csv_path = path.with_suffix('.csv')
-            with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-                w = csv.writer(f)
-                w.writerow(headers)
-                for r in rows:
-                    notes = self._notes_text(r["id"])
-                    billables = self._billables_text(r["id"])
-                    w.writerow([fmt_dt(r["reported_at"]), fmt_dt(r["dispatched_at"]), fmt_dt(r["arrived_at"]), fmt_dt(r["cleared_at"]),
-                                 r["type"], r["location_name"] or "", r["car_number"] or "", r["primary_units"] or "",
-                                 "Cleared" if r["is_cleared"] else "Active", notes, billables])
-            dark_info(parent, "Exported CSV", f"xlsxwriter not installed. Saved CSV instead to\n{csv_path}")
-            return
-
-        wb = xlsxwriter.Workbook(str(path))
-        ws = wb.add_worksheet("Incidents")
-
-        hdr_fmt   = wb.add_format({'bold': True, 'bg_color': '#D0D0D0', 'border': 1, 'valign': 'vcenter'})
-        odd_fmt   = wb.add_format({'bg_color': '#FFFFFF', 'border': 1, 'valign': 'top'})
-        even_fmt  = wb.add_format({'bg_color': '#EBEBEB', 'border': 1, 'valign': 'top'})
-        odd_notes_fmt  = wb.add_format({'bg_color': '#FFFFFF', 'border': 1, 'valign': 'top', 'text_wrap': True})
-        even_notes_fmt = wb.add_format({'bg_color': '#EBEBEB', 'border': 1, 'valign': 'top', 'text_wrap': True})
-
-        col_widths = [20, 20, 20, 20, 18, 22, 10, 18, 10, 45, 35]
-        for c, (h, w) in enumerate(zip(headers, col_widths)):
-            ws.write(0, c, h, hdr_fmt)
-            ws.set_column(c, c, w)
-
-        for r_idx, r in enumerate(rows, start=1):
-            cell_fmt  = odd_fmt        if r_idx % 2 else even_fmt
-            notes_fmt = odd_notes_fmt  if r_idx % 2 else even_notes_fmt
-            notes = self._notes_text(r["id"])
-            billables = self._billables_text(r["id"])
-            values = [fmt_dt(r["reported_at"]), fmt_dt(r["dispatched_at"]), fmt_dt(r["arrived_at"]), fmt_dt(r["cleared_at"]),
-                      r["type"], r["location_name"] or "", r["car_number"] or "", r["primary_units"] or "",
-                      "Cleared" if r["is_cleared"] else "Active"]
-            for c, v in enumerate(values):
-                ws.write(r_idx, c, v, cell_fmt)
-            ws.write(r_idx, len(values), notes, notes_fmt)
-            ws.write(r_idx, len(values) + 1, billables, notes_fmt)
-            if notes or billables:
-                line_count = max(notes.count("\n"), billables.count("\n")) + 1
-                ws.set_row(r_idx, max(20, min(line_count * 15, 120)))
-
-        ws.autofilter(0, 0, len(rows), len(headers) - 1)
-        wb.close()
-        dark_info(parent, "Exported", f"Saved Excel file to\n{path}")
-
     def export_pdf(self, rows: List[sqlite3.Row], path: Path, parent=None, title: str = "Incident Board"):
         try:
             from reportlab.lib.pagesizes import letter, landscape
@@ -1304,7 +1308,7 @@ class Exporter:
             from reportlab.lib.styles import getSampleStyleSheet
         except Exception:
             dark_info(parent, "Missing dependency",
-                      "reportlab is not installed. Run\n  pip install reportlab\n\nAlternatively, export as Excel/CSV and print to PDF.")
+                      "reportlab is not installed. Run\n  pip install reportlab")
             return
 
         doc = SimpleDocTemplate(str(path), pagesize=landscape(letter),
@@ -1319,21 +1323,21 @@ class Exporter:
         def P(text, style=cell_style):
             return Paragraph(str(text).replace("\n", "<br/>"), style)
 
-        headers = ["Reported", "Dispatched", "Arrived", "Cleared", "Type", "Location", "Car #", "Unit", "Status", "Notes", "Billables"]
+        headers = ["Reported", "Dispatched", "Arrived", "Cleared", "Type", "Location", "Car #", "Driver Code", "Unit", "Status", "Notes", "Billables"]
         data = [[P(h, hdr_style) for h in headers]]
         for r in rows:
             notes_text = self._notes_text(r["id"])
             billables_text = self._billables_text(r["id"])
             data.append([
                 P(fmt_dt(r["reported_at"])), P(fmt_dt(r["dispatched_at"])), P(fmt_dt(r["arrived_at"])), P(fmt_dt(r["cleared_at"])),
-                P(r["type"]), P(r["location_name"] or ""), P(r["car_number"] or ""), P(r["primary_units"] or ""),
+                P(r["type"]), P(r["location_name"] or ""), P(r["car_number"] or ""), P(r["driver_code"] or ""), P(r["primary_units"] or ""),
                 P("Cleared" if r["is_cleared"] else "Active"),
                 P(notes_text),
                 P(billables_text),
             ])
 
         # Landscape letter usable width ≈ 720pt (11in × 72 − 2×36 margins)
-        col_widths = [70, 66, 66, 66, 56, 72, 38, 56, 40, 100, 90]  # sum = 720
+        col_widths = [66, 62, 62, 62, 52, 68, 38, 55, 52, 38, 88, 77]  # sum = 720
         table = Table(data, colWidths=col_widths, repeatRows=1)
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#d0d0d0')),
@@ -1348,50 +1352,6 @@ class Exporter:
         story = [Paragraph(title, styles['Title']), table]
         doc.build(story)
         dark_info(parent, "Exported", f"Saved PDF to\n{path}")
-
-    def export_printable_html(self, rows: List[sqlite3.Row], path: Path, title: str = "Incident Board"):
-        import html as html_lib
-        html_path = path.with_suffix('.html')
-        with open(html_path, 'w', encoding='utf-8') as f:
-            f.write(f"""\
-<!doctype html><html><head><meta charset='utf-8'>
-<title>{title}</title>
-<style>
-body{{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:24px}}
-.table{{border-collapse:collapse;width:100%}}
-.table th,.table td{{border:1px solid #ddd;padding:8px;font-size:13px;vertical-align:top}}
-.table th{{background:#d0d0d0;text-align:left}}
-.table tbody tr:nth-child(even){{background:#ebebeb}}
-.table tbody tr:nth-child(odd){{background:#ffffff}}
-.notes{{font-size:12px;color:#444;white-space:pre-line}}
-</style></head><body>
-<h2>{title}</h2>
-<table class='table'>
-<thead><tr><th>Reported</th><th>Dispatched</th><th>Arrived</th><th>Cleared</th><th>Type</th><th>Location</th><th>Car #</th><th>Unit</th><th>Status</th><th>Notes</th><th>Billables</th></tr></thead>
-<tbody>
-""")
-            for r in rows:
-                notes_text = self._notes_text(r["id"])
-                billables_text = self._billables_text(r["id"])
-                notes_html = f"<span class='notes'>{html_lib.escape(notes_text)}</span>" if notes_text else ""
-                billables_html = f"<span class='notes'>{html_lib.escape(billables_text)}</span>" if billables_text else ""
-                f.write(
-                    f"<tr>"
-                    f"<td>{fmt_dt(r['reported_at'])}</td>"
-                    f"<td>{fmt_dt(r['dispatched_at'])}</td>"
-                    f"<td>{fmt_dt(r['arrived_at'])}</td>"
-                    f"<td>{fmt_dt(r['cleared_at'])}</td>"
-                    f"<td>{html_lib.escape(r['type'])}</td>"
-                    f"<td>{html_lib.escape(r['location_name'] or '')}</td>"
-                    f"<td>{html_lib.escape(r['car_number'] or '')}</td>"
-                    f"<td>{html_lib.escape(r['primary_units'] or '')}</td>"
-                    f"<td>{'Cleared' if r['is_cleared'] else 'Active'}</td>"
-                    f"<td>{notes_html}</td>"
-                    f"<td>{billables_html}</td>"
-                    f"</tr>\n"
-                )
-            f.write("</tbody></table></body></html>\n")
-        webbrowser.open(html_path.as_uri())
 
 
 # -----------------------------
@@ -1458,9 +1418,7 @@ class App(tk.Tk):
         m_file = tk.Menu(menubar, tearoff=False)
         m_file.add_command(label="New Incident", command=self.new_incident, accelerator="Ctrl+N")
         m_file.add_separator()
-        m_file.add_command(label="Export to Excel", command=self.export_excel)
         m_file.add_command(label="Export to PDF", command=self.export_pdf)
-        m_file.add_command(label="Open printable HTML", command=self.open_printable_html)
         m_file.add_separator()
         m_file.add_command(label="Exit", command=self._on_close)
         menubar.add_cascade(label="File", menu=m_file)
@@ -1470,6 +1428,7 @@ class App(tk.Tk):
         m_mng.add_command(label="Locations", command=lambda: ListManager(self, self.db, "locations"))
         m_mng.add_command(label="Units", command=lambda: ListManager(self, self.db, "units"))
         m_mng.add_command(label="Incident Types", command=lambda: ListManager(self, self.db, "incident_types"))
+        m_mng.add_command(label="Driver Codes", command=lambda: ListManager(self, self.db, "driver_codes"))
         m_mng.add_separator()
         m_mng.add_command(label="Export Lists...", command=self.export_lists)
         m_mng.add_command(label="Import Lists...", command=self.import_lists)
@@ -1530,7 +1489,7 @@ class App(tk.Tk):
         frame = ttk.Frame(self, padding=(12, 0))
         frame.pack(fill="both", expand=True)
 
-        cols = ("reported", "dispatched", "arrived", "cleared", "type", "location", "car", "units", "status")
+        cols = ("reported", "dispatched", "arrived", "cleared", "type", "location", "car", "driver", "units", "status")
         self.tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="browse")
         self.tree.heading("reported", text="Rec'd")
         self.tree.heading("dispatched", text="Disp")
@@ -1539,6 +1498,7 @@ class App(tk.Tk):
         self.tree.heading("type", text="Type")
         self.tree.heading("location", text="Location")
         self.tree.heading("car", text="Car #")
+        self.tree.heading("driver", text="Driver Code")
         self.tree.heading("units", text="Unit(s)")
         self.tree.heading("status", text="Status")
 
@@ -1549,6 +1509,7 @@ class App(tk.Tk):
         self.tree.column("type",       width=120, anchor="center")
         self.tree.column("location",   width=160, anchor="center")
         self.tree.column("car",        width=70,  anchor="center")
+        self.tree.column("driver",     width=100, anchor="center")
         self.tree.column("units",      width=140, anchor="center")
         self.tree.column("status",     width=90,  anchor="center")
         self.tree.pack(fill="both", expand=True, side="left")
@@ -1568,9 +1529,7 @@ class App(tk.Tk):
         ttk.Button(side, text="Toggle Cleared", command=self.mark_cleared).pack(fill="x", pady=6)
         ttk.Button(side, text="Delete", style="Danger.TButton", command=self.delete_selected).pack(fill="x", pady=6)
         ttk.Separator(side).pack(fill="x", pady=8)
-        ttk.Button(side, text="Export Excel", command=self.export_excel).pack(fill="x", pady=6)
         ttk.Button(side, text="Export PDF", command=self.export_pdf).pack(fill="x", pady=6)
-        ttk.Button(side, text="Printable HTML", command=self.open_printable_html).pack(fill="x", pady=6)
 
         self.tree.bind("<Double-1>", lambda e: self.edit_selected())
 
@@ -1601,7 +1560,7 @@ class App(tk.Tk):
             tag = 'cleared' if r["is_cleared"] else 'active'
             self.tree.insert("", "end", iid=str(r["id"]), values=(
                 fmt_dt(r["reported_at"]), fmt_dt(r["dispatched_at"]), fmt_dt(r["arrived_at"]), fmt_dt(r["cleared_at"]),
-                r["type"], r["location_name"] or "", r["car_number"] or "", units_label, "Cleared" if r["is_cleared"] else "Active"
+                r["type"], r["location_name"] or "", r["car_number"] or "", r["driver_code"] or "", units_label, "Cleared" if r["is_cleared"] else "Active"
             ), tags=(tag,))
 
     def reset_filters(self):
@@ -1657,16 +1616,6 @@ class App(tk.Tk):
         loc_id, tname, start, end = self._filters()
         return self.db.fetch_board(loc_id, tname, start, end)
 
-    def export_excel(self):
-        rows = self._current_rows_for_export()
-        if not rows:
-            dark_info(self, "Nothing to export", "No incidents match the current filters.")
-            return
-        path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel", ".xlsx"), ("CSV", ".csv")])
-        if not path:
-            return
-        self.exporter.export_excel(rows, Path(path), self)
-
     def _export_title(self) -> str:
         d1 = self.from_picker.get_date().strftime(DISPLAY_DATE_FMT)
         d2 = self.to_picker.get_date().strftime(DISPLAY_DATE_FMT)
@@ -1682,15 +1631,6 @@ class App(tk.Tk):
             return
         self.exporter.export_pdf(rows, Path(path), self, title=self._export_title())
 
-    def open_printable_html(self):
-        rows = self._current_rows_for_export()
-        if not rows:
-            dark_info(self, "Nothing to show", "No incidents match the current filters.")
-            return
-        out = DB_DIR / "incident_board.html"
-        self.exporter.export_printable_html(rows, out, title=self._export_title())
-
-
     def export_lists(self):
         path = filedialog.asksaveasfilename(
             title="Export Lists",
@@ -1704,6 +1644,7 @@ class App(tk.Tk):
             "locations": [r["name"] for r in self.db.list_locations()],
             "incident_types": [r["name"] for r in self.db.list_incident_types()],
             "units": [r["name"] for r in self.db.list_units()],
+            "driver_codes": [r["name"] for r in self.db.list_driver_codes()],
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -1723,7 +1664,7 @@ class App(tk.Tk):
             dark_info(self, "Import Failed", f"Could not read file:\n{e}")
             return
 
-        added = {"locations": 0, "incident_types": 0, "units": 0}
+        added = {"locations": 0, "incident_types": 0, "units": 0, "driver_codes": 0}
         for name in data.get("locations", []):
             if isinstance(name, str) and name.strip():
                 before = len(self.db.list_locations())
@@ -1743,9 +1684,15 @@ class App(tk.Tk):
                 self.db.add_unit(name)
                 if len(self.db.list_units()) > before:
                     added["units"] += 1
+        for name in data.get("driver_codes", []):
+            if isinstance(name, str) and name.strip():
+                before = len(self.db.list_driver_codes())
+                self.db.add_driver_code(name.strip())
+                if len(self.db.list_driver_codes()) > before:
+                    added["driver_codes"] += 1
 
         dark_info(self, "Import Complete",
-                  f"Added:\n  {added['locations']} location(s)\n  {added['incident_types']} incident type(s)\n  {added['units']} unit(s)\n\nExisting entries were not duplicated.")
+                  f"Added:\n  {added['locations']} location(s)\n  {added['incident_types']} incident type(s)\n  {added['units']} unit(s)\n  {added['driver_codes']} driver code(s)\n\nExisting entries were not duplicated.")
 
     def _check_date_rollover(self):
         if not self.winfo_exists():
@@ -1857,10 +1804,8 @@ class App(tk.Tk):
 
         export_row = ttk.Frame(outer)
         export_row.pack(fill="x", pady=(0, 10))
-        ttk.Label(export_row, text="Export as:").pack(side="left", padx=(0, 8))
-        ttk.Button(export_row, text="Excel",          command=lambda: self.export_excel()).pack(side="left", padx=(0, 6))
-        ttk.Button(export_row, text="PDF",            command=lambda: self.export_pdf()).pack(side="left", padx=(0, 6))
-        ttk.Button(export_row, text="Printable HTML", command=lambda: self.open_printable_html()).pack(side="left")
+        ttk.Button(export_row, text="Export to PDF", style="Manage.TButton",
+                   command=lambda: self.export_pdf()).pack(side="left")
 
         ttk.Separator(outer).pack(fill="x", pady=(4, 12))
 
@@ -1964,21 +1909,20 @@ class App(tk.Tk):
         body("before exiting. All data remains saved regardless of whether you export.")
         body("")
 
-        h2("Managing Units, Locations & Types")
+        h2("Managing Units, Locations, Types & Driver Codes")
         body("Click Manage Units (right panel) or use the Manage menu to open list managers for:")
         body("  • Units — vehicles or personnel that can be assigned to incidents.")
         body("  • Locations — named locations selectable on the incident form.")
         body("  • Incident Types — categories used to classify incidents.")
+        body("  • Driver Codes — driver identifiers selectable on the incident form.")
         body("In each manager you can Add, Edit, or Delete entries.")
         body("To reorder, grab the ⠿ handle on the right side of a row and drag it up or down.")
         body("Items cannot be deleted while attached to existing incidents.")
         body("")
 
         h2("Exporting")
-        body("Use the right panel or File menu to export the currently filtered board:")
-        body("  • Export Excel — saves an .xlsx spreadsheet.")
-        body("  • Export PDF — saves a formatted .pdf report.")
-        body("  • Printable HTML — opens a print-ready page in your browser.")
+        body("Use the Export PDF button on the right panel or File → Export to PDF to save the")
+        body("currently filtered board as a formatted PDF report.")
         body("")
 
         h2("Import / Export Lists")
