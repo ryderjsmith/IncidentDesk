@@ -1,0 +1,39 @@
+[project]
+name = "incident-desk"
+version = "1.4"
+description = "Offline incident logging app for race control."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Ryder Smith" }]
+keywords = ["incident", "race-control", "tkinter", "desktop"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "Environment :: Win32 (MS Windows)",
+    "Topic :: Office/Business",
+    "Intended Audience :: End Users/Desktop",
+]
+dependencies = [
+    "tkcalendar",
+    "pillow",
+    "reportlab",
+]
+
+[project.optional-dependencies]
+build = ["pyinstaller"]
+
+[project.gui-scripts]
+incident-desk = "incident_desk.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/ryderjsmith/IncidentDesk"
+Issues = "https://github.com/ryderjsmith/IncidentDesk/issues"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["incident_desk*"]
