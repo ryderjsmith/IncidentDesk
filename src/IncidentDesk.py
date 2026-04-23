@@ -492,14 +492,6 @@ class DB:
             ) ORDER BY u.sort_order, u.id
         """).fetchall()
 
-    def swap_unit_order(self, id1: int, id2: int):
-        r1 = self.conn.execute("SELECT sort_order FROM units WHERE id=?", (id1,)).fetchone()
-        r2 = self.conn.execute("SELECT sort_order FROM units WHERE id=?", (id2,)).fetchone()
-        if r1 and r2:
-            self.conn.execute("UPDATE units SET sort_order=? WHERE id=?", (r2["sort_order"], id1))
-            self.conn.execute("UPDATE units SET sort_order=? WHERE id=?", (r1["sort_order"], id2))
-            self.conn.commit()
-
     def add_unit(self, name: str, category: str = ""):
         self.conn.execute(
             "INSERT OR IGNORE INTO units(name, category, sort_order) "
@@ -532,21 +524,14 @@ class DB:
         )
         self.conn.commit()
 
-    def swap_location_order(self, id1: int, id2: int):
-        r1 = self.conn.execute("SELECT sort_order FROM locations WHERE id=?", (id1,)).fetchone()
-        r2 = self.conn.execute("SELECT sort_order FROM locations WHERE id=?", (id2,)).fetchone()
-        if r1 and r2:
-            self.conn.execute("UPDATE locations SET sort_order=? WHERE id=?", (r2["sort_order"], id1))
-            self.conn.execute("UPDATE locations SET sort_order=? WHERE id=?", (r1["sort_order"], id2))
-            self.conn.commit()
-
-    def swap_incident_type_order(self, id1: int, id2: int):
-        r1 = self.conn.execute("SELECT sort_order FROM incident_types WHERE id=?", (id1,)).fetchone()
-        r2 = self.conn.execute("SELECT sort_order FROM incident_types WHERE id=?", (id2,)).fetchone()
-        if r1 and r2:
-            self.conn.execute("UPDATE incident_types SET sort_order=? WHERE id=?", (r2["sort_order"], id1))
-            self.conn.execute("UPDATE incident_types SET sort_order=? WHERE id=?", (r1["sort_order"], id2))
-            self.conn.commit()
+    def set_sort_order(self, table: str, ordered_ids: list):
+        """Assign sort_order 1..N to rows in the given order."""
+        if table not in ("locations", "units", "incident_types"):
+            raise ValueError(f"unknown table: {table}")
+        cur = self.conn.cursor()
+        for idx, row_id in enumerate(ordered_ids, start=1):
+            cur.execute(f"UPDATE {table} SET sort_order=? WHERE id=?", (idx, row_id))
+        self.conn.commit()
 
     def rename_incident_type(self, type_id: int, new_name: str):
         self.conn.execute("UPDATE incident_types SET name=? WHERE id=?", (new_name.strip(), type_id))
@@ -792,25 +777,29 @@ class ListManager(tk.Toplevel):
         self.resizable(False, False)
         self.configure(padx=12, pady=12)
 
-        self.tree = ttk.Treeview(self, columns=("name",), show="headings", height=14)
+        self.tree = ttk.Treeview(self, columns=("name", "handle"), show="headings", height=14)
         self.tree.heading("name", text="Name")
+        self.tree.heading("handle", text="")
         self.tree.column("name", width=420)
+        self.tree.column("handle", width=40, anchor="center", stretch=False)
         self.tree.tag_configure("available",   background="#c8e6c9", foreground="#1a1a1a")
         self.tree.tag_configure("unavailable", background="#ffcdd2", foreground="#1a1a1a")
-        self.tree.grid(row=0, column=0, columnspan=6, sticky="nsew")
+        self.tree.grid(row=0, column=0, columnspan=4, sticky="nsew")
+
+        self._drag_source: Optional[str] = None
+        self.tree.bind("<ButtonPress-1>",   self._on_drag_start)
+        self.tree.bind("<B1-Motion>",       self._on_drag_motion)
+        self.tree.bind("<ButtonRelease-1>", self._on_drag_end)
 
         btn_add   = ttk.Button(self, text="Add",    style="New.TButton",    command=self.add)
         btn_edit  = ttk.Button(self, text="Edit",   style="Manage.TButton", command=self.edit)
-        btn_up    = ttk.Button(self, text="▲ Up",   command=self.move_up)
-        btn_down  = ttk.Button(self, text="▼ Down", command=self.move_down)
         btn_del   = ttk.Button(self, text="Delete", style="Danger.TButton", command=self.delete)
         btn_close = ttk.Button(self, text="Close",  command=self.destroy)
         btn_add.grid(  row=1, column=0, pady=10, sticky="w")
         btn_edit.grid( row=1, column=1, pady=10, sticky="w", padx=(6, 0))
-        btn_up.grid(   row=1, column=2, pady=10, sticky="w", padx=(6, 0))
-        btn_down.grid( row=1, column=3, pady=10, sticky="w", padx=(6, 0))
-        btn_del.grid(  row=1, column=4, pady=10, sticky="w", padx=(6, 0))
-        btn_close.grid(row=1, column=5, pady=10, sticky="e", padx=(6, 0))
+        btn_del.grid(  row=1, column=2, pady=10, sticky="w", padx=(6, 0))
+        btn_close.grid(row=1, column=3, pady=10, sticky="e", padx=(6, 0))
+        self.grid_columnconfigure(2, weight=1)
 
         self.refresh()
         if self.table == "units":
@@ -825,16 +814,17 @@ class ListManager(tk.Toplevel):
     def refresh(self):
         for i in self.tree.get_children():
             self.tree.delete(i)
+        handle = "⠿"  # Braille pattern dots-123456 — 6-dot drag handle
         if self.table == "locations":
             for r in self.db.list_locations():
-                self.tree.insert("", "end", iid=str(r["id"]), values=(r["name"],))
+                self.tree.insert("", "end", iid=str(r["id"]), values=(r["name"], handle))
         elif self.table == "incident_types":
             for r in self.db.list_incident_types():
-                self.tree.insert("", "end", iid=str(r["id"]), values=(r["name"],))
+                self.tree.insert("", "end", iid=str(r["id"]), values=(r["name"], handle))
         else:  # units
             for r in self.db.list_units_with_availability():
                 tag = "available" if r["available"] else "unavailable"
-                self.tree.insert("", "end", iid=str(r["id"]), values=(r["name"],), tags=(tag,))
+                self.tree.insert("", "end", iid=str(r["id"]), values=(r["name"], handle), tags=(tag,))
 
     def add(self):
         if self.table == "units":
@@ -877,37 +867,35 @@ class ListManager(tk.Toplevel):
             self.db.rename_incident_type(iid, new)
         self.refresh()
 
-    def _swap(self, id1: int, id2: int):
-        if self.table == "locations":
-            self.db.swap_location_order(id1, id2)
-        elif self.table == "units":
-            self.db.swap_unit_order(id1, id2)
-        else:
-            self.db.swap_incident_type_order(id1, id2)
+    def _on_drag_start(self, event):
+        # Only start a drag when the user clicks the 6-dot handle cell (column #2).
+        if (self.tree.identify_region(event.x, event.y) != "cell"
+                or self.tree.identify_column(event.x) != "#2"):
+            self._drag_source = None
+            return
+        row = self.tree.identify_row(event.y)
+        if not row:
+            self._drag_source = None
+            return
+        self._drag_source = row
+        self.tree.selection_set(row)
+        self.tree.config(cursor="fleur")
 
-    def move_up(self):
-        sel = self.tree.selection()
-        if not sel:
+    def _on_drag_motion(self, event):
+        if not self._drag_source:
             return
-        prev = self.tree.prev(sel[0])
-        if not prev:
+        target = self.tree.identify_row(event.y)
+        if not target or target == self._drag_source:
             return
-        iid, prev_iid = int(sel[0]), int(prev)
-        self._swap(iid, prev_iid)
-        self.refresh()
-        self.tree.selection_set(str(iid))
+        self.tree.move(self._drag_source, "", self.tree.index(target))
 
-    def move_down(self):
-        sel = self.tree.selection()
-        if not sel:
+    def _on_drag_end(self, event):
+        if not self._drag_source:
             return
-        nxt = self.tree.next(sel[0])
-        if not nxt:
-            return
-        iid, nxt_iid = int(sel[0]), int(nxt)
-        self._swap(iid, nxt_iid)
-        self.refresh()
-        self.tree.selection_set(str(iid))
+        self._drag_source = None
+        self.tree.config(cursor="")
+        ordered_ids = [int(iid) for iid in self.tree.get_children()]
+        self.db.set_sort_order(self.table, ordered_ids)
 
     def delete(self):
         sel = self.tree.selection()
@@ -1981,7 +1969,8 @@ class App(tk.Tk):
         body("  • Units — vehicles or personnel that can be assigned to incidents.")
         body("  • Locations — named locations selectable on the incident form.")
         body("  • Incident Types — categories used to classify incidents.")
-        body("In each manager you can Add, Edit, reorder with ▲ Up / ▼ Down, or Delete entries.")
+        body("In each manager you can Add, Edit, or Delete entries.")
+        body("To reorder, grab the ⠿ handle on the right side of a row and drag it up or down.")
         body("Items cannot be deleted while attached to existing incidents.")
         body("")
 
