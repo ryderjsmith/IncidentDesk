@@ -15,7 +15,7 @@ class ListManager(tk.Toplevel):
     def __init__(self, master, db: DB, table: str):
         super().__init__(master)
         self.withdraw()
-        set_window_icon(self, {"units": "units", "locations": "locations", "incident_types": "types", "driver_codes": "driver_codes"}.get(table, "units"))
+        set_window_icon(self, table)
         self.after(0, lambda: (apply_dark_titlebar(self), position_on_parent(self, master)))
         self.db = db
         self.table = table

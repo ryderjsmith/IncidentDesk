@@ -18,7 +18,7 @@ _WINDOW_ICONS = {
     "billables":     ("🧾", "#d4a74a"),
     "units":         ("🚒", "#27ae60"),
     "locations":     ("📍", "#8e44ad"),
-    "types":         ("🏷", "#e67e22"),
+    "incident_types": ("🏷", "#e67e22"),
     "driver_codes":  ("🏎", "#16a085"),
     "info":          ("ℹ",  "#2980b9"),
     "confirm":       ("⚠",  "#e67e22"),
