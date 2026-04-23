@@ -8,7 +8,7 @@ Incidents can be sorted and filtered based on type or date.
 Incidents on the board are color coded based on completion.
 Each incident includes details such as assigned units, location and type with various timestamps.
 Units can be implemented and managed based on availability.
-All data is exportable as PDF, xlsx or html.
+All data is exportable as PDF.
 
 Allows the race track to keep a database of on track incidents for future reference.
 Database is built and utilized locally after the first run.
