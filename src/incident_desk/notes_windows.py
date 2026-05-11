@@ -31,19 +31,30 @@ class NotesWindow(tk.Toplevel):
         ttk.Button(btnbar, text="Insert Time", command=lambda: self.entry.insert(tk.END, now_dt_display()+" ")).grid(row=0, column=0, padx=4, pady=4)
         ttk.Button(btnbar, text="Add Note", command=self.add_note).grid(row=1, column=0, padx=4)
 
-        self.tree = ttk.Treeview(self, columns=("ts", "body"), show="headings")
-        self.tree.heading("ts", text="Timestamp")
-        self.tree.heading("body", text="Note")
-        self.tree.column("ts", width=160)
-        self.tree.column("body", width=420)
-        self.tree.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
+        view = ttk.Frame(self)
+        view.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
+        view.grid_rowconfigure(0, weight=1)
+        view.grid_columnconfigure(0, weight=1)
+
+        self.view = tk.Text(view, wrap="word", state="disabled",
+                            padx=10, pady=10, relief="solid", bd=1, cursor="arrow")
+        sb = ttk.Scrollbar(view, orient="vertical", command=self.view.yview)
+        self.view.configure(yscrollcommand=sb.set)
+        self.view.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+        self.view.tag_configure("ts", font=("TkDefaultFont", 9, "bold"), foreground="#1565c0")
+        self.view.tag_configure("body", font=("TkDefaultFont", 10),
+                                lmargin1=10, lmargin2=10, spacing3=10)
+
         self.refresh()
 
     def refresh(self):
-        for i in self.tree.get_children():
-            self.tree.delete(i)
+        self.view.configure(state="normal")
+        self.view.delete("1.0", tk.END)
         for n in self.db.list_notes(self.inc_id):
-            self.tree.insert("", "end", values=(n["ts"], n["body"]))
+            self.view.insert(tk.END, n["ts"] + "\n", "ts")
+            self.view.insert(tk.END, n["body"] + "\n", "body")
+        self.view.configure(state="disabled")
 
     def add_note(self):
         text = self.entry.get("1.0", tk.END).strip()
@@ -74,17 +85,27 @@ class BillablesWindow(tk.Toplevel):
         btnbar.grid(row=0, column=1, sticky="ns")
         ttk.Button(btnbar, text="Add Billable", command=self.add_billable).grid(row=0, column=0, padx=4, pady=4)
 
-        self.tree = ttk.Treeview(self, columns=("body",), show="headings")
-        self.tree.heading("body", text="Billable")
-        self.tree.column("body", width=580)
-        self.tree.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
+        view = ttk.Frame(self)
+        view.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
+        view.grid_rowconfigure(0, weight=1)
+        view.grid_columnconfigure(0, weight=1)
+
+        self.view = tk.Text(view, wrap="word", state="disabled",
+                            padx=10, pady=10, relief="solid", bd=1, cursor="arrow")
+        sb = ttk.Scrollbar(view, orient="vertical", command=self.view.yview)
+        self.view.configure(yscrollcommand=sb.set)
+        self.view.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+        self.view.tag_configure("body", font=("TkDefaultFont", 10), spacing3=10)
+
         self.refresh()
 
     def refresh(self):
-        for i in self.tree.get_children():
-            self.tree.delete(i)
+        self.view.configure(state="normal")
+        self.view.delete("1.0", tk.END)
         for b in self.db.list_billables(self.inc_id):
-            self.tree.insert("", "end", values=(b["body"],))
+            self.view.insert(tk.END, b["body"] + "\n", "body")
+        self.view.configure(state="disabled")
 
     def add_billable(self):
         text = self.entry.get("1.0", tk.END).strip()

@@ -99,7 +99,6 @@ class IncidentForm(tk.Toplevel):
         self.cleared_var_bool = tk.IntVar(value=0)
         ttk.Checkbutton(self, text="Mark as Cleared", variable=self.cleared_var_bool,
                         onvalue=1, offvalue=0).grid(row=12, column=0, sticky="w")
-        ttk.Button(self, text="Close", command=self.destroy).grid(row=12, column=1, sticky="e", padx=(0, 6))
         ttk.Button(self, text="Save", command=self.save).grid(row=12, column=2, sticky="e")
 
         if self.inc_id:
