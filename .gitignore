@@ -8,15 +8,3 @@ __pycache__/
 *.db
 *.spec
 *.egg-info/
-*.key
-.env
-.env.*
-secrets.json
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
-desktop.ini
-*.bak
-*.swp
-*~

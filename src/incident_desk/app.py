@@ -21,8 +21,6 @@ from .dialogs import dark_confirm, dark_info
 from .exporter import Exporter
 from .icons import set_icon, set_window_icon
 from .incident_form import IncidentForm
-from .license import load_license
-from .license_dialog import show_activation_dialog, show_license_info
 from .list_manager import ListManager
 from .notes_windows import BillablesWindow, NotesWindow
 from .updater import check_for_update, download_file, update_prompt
@@ -35,16 +33,6 @@ class App(tk.Tk):
         super().__init__()
         set_icon(self)
         self.after(0, lambda: apply_dark_titlebar(self))
-        self.withdraw()
-
-        # License gate: block startup until a valid license is on disk.
-        if load_license() is None:
-            if show_activation_dialog(self) is None:
-                self.destroy()
-                raise SystemExit(0)
-        self.license_key, self.licensee, self.license_issued = load_license()
-
-        self.deiconify()
         self.db = DB()
         self.title(APP_TITLE)
         self.geometry("1400x740")
@@ -120,10 +108,9 @@ class App(tk.Tk):
         # Help
         m_help = tk.Menu(menubar, tearoff=False)
         m_help.add_command(label="User Guide", command=lambda: show_user_guide(self))
-        m_help.add_command(label="License Info", command=lambda: show_license_info(self, self.license_key, self.licensee, self.license_issued))
         m_help.add_command(label="Check for Updates", command=self._manual_update_check)
         m_help.add_separator()
-        m_help.add_command(label="About", command=lambda: dark_info(self, "About", f"Incident Desk {APP_VERSION}\nLicensed to: {self.licensee}\nSimple offline incident board for race control\nBuilt with Python (Tkinter) + SQLite by Ryder Smith 2025-2026"))
+        m_help.add_command(label="About", command=lambda: dark_info(self, "About", f"Incident Desk {APP_VERSION}\nSimple offline incident board for race control\nBuilt with Python (Tkinter) + SQLite by Ryder Smith 2025-2026"))
         menubar.add_cascade(label="Help", menu=m_help)
         self.config(menu=menubar)
 
