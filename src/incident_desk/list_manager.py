@@ -21,7 +21,6 @@ class ListManager(tk.Toplevel):
         self.table = table
         self.title(f"Manage {table.replace('_', ' ').title()}")
         self.geometry("600x460")
-        self.resizable(False, False)
         self.configure(padx=12, pady=12)
 
         self.tree = ttk.Treeview(self, columns=("name", "handle"), show="headings", height=14)
@@ -49,11 +48,11 @@ class ListManager(tk.Toplevel):
         self.grid_columnconfigure(2, weight=1)
 
         self.refresh()
-        if self.table == "units":
+        if self.table in ("units", "ambulances"):
             self._poll_availability()
 
     def _poll_availability(self):
-        """Re-colour unit rows every 5 seconds so status stays current."""
+        """Re-colour unit / ambulance rows every 5 seconds so status stays current."""
         if self.winfo_exists():
             self.refresh()
             self.after(5000, self._poll_availability)
@@ -71,6 +70,10 @@ class ListManager(tk.Toplevel):
         elif self.table == "driver_codes":
             for r in self.db.list_driver_codes():
                 self.tree.insert("", "end", iid=str(r["id"]), values=(r["name"], handle))
+        elif self.table == "ambulances":
+            for r in self.db.list_ambulances_with_availability():
+                tag = "available" if r["available"] else "unavailable"
+                self.tree.insert("", "end", iid=str(r["id"]), values=(r["name"], handle), tags=(tag,))
         else:  # units
             for r in self.db.list_units_with_availability():
                 tag = "available" if r["available"] else "unavailable"
@@ -90,6 +93,8 @@ class ListManager(tk.Toplevel):
                 self.db.add_location(name)
             elif self.table == "driver_codes":
                 self.db.add_driver_code(name)
+            elif self.table == "ambulances":
+                self.db.add_ambulance(name)
             else:
                 self.db.add_incident_type(name)
         self.refresh()
@@ -117,6 +122,12 @@ class ListManager(tk.Toplevel):
             if new is None:
                 return
             self.db.rename_driver_code(iid, new)
+        elif self.table == "ambulances":
+            old = self.tree.item(sel, "values")[0]
+            new = ask_for_text(self, "Rename ambulance", old)
+            if new is None:
+                return
+            self.db.rename_ambulance(iid, new)
         else:
             old = self.tree.item(sel, "values")[0]
             new = ask_for_text(self, "Rename incident type", old)
@@ -169,6 +180,8 @@ class ListManager(tk.Toplevel):
             count = self.db.location_incident_count(iid)
         elif self.table == "driver_codes":
             count = self.db.driver_code_incident_count(name)
+        elif self.table == "ambulances":
+            count = self.db.ambulance_incident_count(name)
         else:
             count = self.db.incident_type_incident_count(name)
 
@@ -187,6 +200,8 @@ class ListManager(tk.Toplevel):
             self.db.delete_location(iid)
         elif self.table == "driver_codes":
             self.db.delete_driver_code(iid)
+        elif self.table == "ambulances":
+            self.db.delete_ambulance(iid)
         else:
             self.db.delete_incident_type(iid)
         self.refresh()

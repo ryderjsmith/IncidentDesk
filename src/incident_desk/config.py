@@ -40,8 +40,8 @@ except Exception:
 
 DB_PATH = DB_DIR / "incidentdesk.db"
 
-APP_TITLE = "Road America – Race Control - Incident Desk"
-APP_VERSION = "2.0"                       # bump before cutting a new GitHub release
+APP_TITLE = "Incident Desk"
+APP_VERSION = "1.8"                       # bump before cutting a new GitHub release
 GITHUB_REPO = "ryderjsmith/IncidentDesk"  # owner/repo for update checks
 
 # Dev layout: project_root/src/incident_desk/config.py → project_root/img/favicon.ico

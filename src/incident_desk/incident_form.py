@@ -22,12 +22,11 @@ class IncidentForm(tk.Toplevel):
         self.inc_id = inc_id
         self.on_saved = on_saved
         self.title("Incident Entry")
-        self.geometry("820x605")
+        self.geometry("820x640")
         self.transient(master)
         self.configure(padx=12, pady=12)
-        self.resizable(False, False)
 
-        for i in range(9):
+        for i in range(10):
             self.grid_rowconfigure(i, pad=4)
         self.grid_columnconfigure(1, weight=1)
 
@@ -36,6 +35,7 @@ class IncidentForm(tk.Toplevel):
         self.arrived_var    = tk.StringVar()
         self.cleared_var    = tk.StringVar()
         self.driver_code_var = tk.StringVar()
+        self.ambulance_var  = tk.StringVar()
         self.car_number_var = tk.StringVar()
         self.loc_var        = tk.StringVar()
         self.type_var       = tk.StringVar()
@@ -47,7 +47,8 @@ class IncidentForm(tk.Toplevel):
         ttk.Label(self, text="Primary Unit").grid(row=1, column=0, sticky="w")
         self.primary_cb = ttk.Combobox(self, textvariable=self.primary_var,
                                        values=self._available_unit_names(), state="readonly")
-        self.primary_cb.grid(row=1, column=1, sticky="ew")
+        self.primary_cb.grid(row=1, column=1, sticky="ew", padx=(0, 6))
+        ttk.Button(self, text="Manage", command=lambda: self._manage("units")).grid(row=1, column=2, sticky="w")
 
         self._time_row("Dispatched", self.dispatched_var, row=2)
         self._time_row("Arrived", self.arrived_var, row=3)
@@ -58,25 +59,31 @@ class IncidentForm(tk.Toplevel):
         self.driver_code_cb.grid(row=4, column=1, sticky="ew", padx=(0, 6))
         ttk.Button(self, text="Manage", command=lambda: self._manage("driver_codes")).grid(row=4, column=2, sticky="w")
 
-        ttk.Label(self, text="Car #").grid(row=5, column=0, sticky="w")
-        ttk.Entry(self, textvariable=self.car_number_var).grid(row=5, column=1, sticky="ew", padx=(0, 6))
+        ttk.Label(self, text="Ambulance").grid(row=5, column=0, sticky="w")
+        self.ambulance_cb = ttk.Combobox(self, textvariable=self.ambulance_var,
+                                         values=[r["name"] for r in self.db.list_ambulances()], state="readonly")
+        self.ambulance_cb.grid(row=5, column=1, sticky="ew", padx=(0, 6))
+        ttk.Button(self, text="Manage", command=lambda: self._manage("ambulances")).grid(row=5, column=2, sticky="w")
 
-        ttk.Label(self, text="Location").grid(row=6, column=0, sticky="w")
+        ttk.Label(self, text="Car #").grid(row=6, column=0, sticky="w")
+        ttk.Entry(self, textvariable=self.car_number_var).grid(row=6, column=1, sticky="ew", padx=(0, 6))
+
+        ttk.Label(self, text="Location").grid(row=7, column=0, sticky="w")
         self.loc_cb = ttk.Combobox(self, textvariable=self.loc_var,
                                    values=[r["name"] for r in self.db.list_locations()], state="readonly")
-        self.loc_cb.grid(row=6, column=1, sticky="ew", padx=(0, 6))
-        ttk.Button(self, text="Manage", command=lambda: self._manage("locations")).grid(row=6, column=2, sticky="w")
+        self.loc_cb.grid(row=7, column=1, sticky="ew", padx=(0, 6))
+        ttk.Button(self, text="Manage", command=lambda: self._manage("locations")).grid(row=7, column=2, sticky="w")
 
-        ttk.Label(self, text="Incident Type").grid(row=7, column=0, sticky="w")
+        ttk.Label(self, text="Incident Type").grid(row=8, column=0, sticky="w")
         self.type_cb = ttk.Combobox(self, textvariable=self.type_var,
                                     values=[r["name"] for r in self.db.list_incident_types()], state="readonly")
-        self.type_cb.grid(row=7, column=1, sticky="ew", padx=(0, 6))
-        ttk.Button(self, text="Manage", command=lambda: self._manage("incident_types")).grid(row=7, column=2, sticky="w")
+        self.type_cb.grid(row=8, column=1, sticky="ew", padx=(0, 6))
+        ttk.Button(self, text="Manage", command=lambda: self._manage("incident_types")).grid(row=8, column=2, sticky="w")
 
-        self._time_row("Cleared", self.cleared_var, row=8)
+        self._time_row("Cleared", self.cleared_var, row=9)
 
         frame_notes = ttk.LabelFrame(self, text="Add Note (time-stamped)")
-        frame_notes.grid(row=9, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+        frame_notes.grid(row=10, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
         frame_notes.grid_columnconfigure(0, weight=1)
         self.note_text = tk.Text(frame_notes, height=4)
         self.note_text.grid(row=0, column=0, sticky="ew")
@@ -86,7 +93,7 @@ class IncidentForm(tk.Toplevel):
         ttk.Button(btns, text="Save Note", command=self._save_quick_note).grid(row=1, column=0, padx=4)
 
         frame_bill = ttk.LabelFrame(self, text="Add Billable")
-        frame_bill.grid(row=10, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+        frame_bill.grid(row=11, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
         frame_bill.grid_columnconfigure(0, weight=1)
         self.bill_text = tk.Text(frame_bill, height=3)
         self.bill_text.grid(row=0, column=0, sticky="ew")
@@ -95,11 +102,11 @@ class IncidentForm(tk.Toplevel):
         ttk.Button(btns_b, text="Save Billable", command=self._save_quick_billable).grid(row=0, column=0, padx=4, pady=4)
 
         sep = ttk.Separator(self)
-        sep.grid(row=11, column=0, columnspan=3, sticky="ew", pady=6)
+        sep.grid(row=12, column=0, columnspan=3, sticky="ew", pady=6)
         self.cleared_var_bool = tk.IntVar(value=0)
         ttk.Checkbutton(self, text="Mark as Cleared", variable=self.cleared_var_bool,
-                        onvalue=1, offvalue=0).grid(row=12, column=0, sticky="w")
-        ttk.Button(self, text="Save", command=self.save).grid(row=12, column=2, sticky="e")
+                        onvalue=1, offvalue=0).grid(row=13, column=0, sticky="w")
+        ttk.Button(self, text="Save", command=self.save).grid(row=13, column=2, sticky="e")
 
         if self.inc_id:
             self._load_existing()
@@ -117,6 +124,7 @@ class IncidentForm(tk.Toplevel):
         self.loc_cb["values"] = [r["name"] for r in self.db.list_locations()]
         self.type_cb["values"] = [r["name"] for r in self.db.list_incident_types()]
         self.driver_code_cb["values"] = [r["name"] for r in self.db.list_driver_codes()]
+        self.ambulance_cb["values"] = [r["name"] for r in self.db.list_ambulances()]
         self.unit_map = {u["name"]: u["id"] for u in self.db.list_units()}
         self.primary_cb["values"] = self._available_unit_names()
 
@@ -135,6 +143,7 @@ class IncidentForm(tk.Toplevel):
         self.type_var.set(inc["type"])
         self.car_number_var.set(inc["car_number"] or "")
         self.driver_code_var.set(inc["driver_code"] or "")
+        self.ambulance_var.set(inc["ambulance"] or "")
         self.reported_var.set(fmt_dt(inc["reported_at"]))
         self.dispatched_var.set(fmt_dt(inc["dispatched_at"]))
         self.arrived_var.set(fmt_dt(inc["arrived_at"]))
@@ -201,11 +210,12 @@ class IncidentForm(tk.Toplevel):
 
         car_number = self.car_number_var.get().strip()
         driver_code = self.driver_code_var.get().strip()
+        ambulance = self.ambulance_var.get().strip()
 
         if self.inc_id:
-            self.db.update_incident(self.inc_id, loc_id, t_name, reported, disp, arr, clr, "", cleared_flag, primary_id, [], car_number, driver_code)
+            self.db.update_incident(self.inc_id, loc_id, t_name, reported, disp, arr, clr, "", cleared_flag, primary_id, [], car_number, driver_code, ambulance)
         else:
-            self.inc_id = self.db.create_incident(loc_id, t_name, reported, disp, arr, clr, "", cleared_flag, primary_id, [], car_number, driver_code)
+            self.inc_id = self.db.create_incident(loc_id, t_name, reported, disp, arr, clr, "", cleared_flag, primary_id, [], car_number, driver_code, ambulance)
 
         # Flush any pending note text now that inc_id is guaranteed to exist
         self._flush_note()

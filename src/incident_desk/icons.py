@@ -20,6 +20,7 @@ _WINDOW_ICONS = {
     "locations":     ("📍", "#8e44ad"),
     "incident_types": ("🏷", "#e67e22"),
     "driver_codes":  ("🏎", "#16a085"),
+    "ambulances":    ("🚑", "#d32f2f"),
     "info":          ("ℹ",  "#2980b9"),
     "confirm":       ("⚠",  "#e67e22"),
     "input":         ("✏",  "#16a085"),

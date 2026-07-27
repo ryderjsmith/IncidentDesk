@@ -100,6 +100,7 @@ class App(tk.Tk):
         m_mng.add_command(label="Units", command=lambda: ListManager(self, self.db, "units"))
         m_mng.add_command(label="Incident Types", command=lambda: ListManager(self, self.db, "incident_types"))
         m_mng.add_command(label="Driver Codes", command=lambda: ListManager(self, self.db, "driver_codes"))
+        m_mng.add_command(label="Ambulances", command=lambda: ListManager(self, self.db, "ambulances"))
         m_mng.add_separator()
         m_mng.add_command(label="Export Lists...", command=self.export_lists)
         m_mng.add_command(label="Import Lists...", command=self.import_lists)
@@ -159,7 +160,7 @@ class App(tk.Tk):
         frame = ttk.Frame(self, padding=(12, 0))
         frame.pack(fill="both", expand=True)
 
-        cols = ("reported", "dispatched", "arrived", "cleared", "type", "location", "car", "driver", "units", "status")
+        cols = ("reported", "dispatched", "arrived", "cleared", "type", "location", "car", "driver", "ambulance", "units", "status")
         self.tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="browse")
         self.tree.heading("reported", text="Rec'd")
         self.tree.heading("dispatched", text="Disp")
@@ -169,6 +170,7 @@ class App(tk.Tk):
         self.tree.heading("location", text="Location")
         self.tree.heading("car", text="Car #")
         self.tree.heading("driver", text="Driver Code")
+        self.tree.heading("ambulance", text="Ambulance")
         self.tree.heading("units", text="Unit(s)")
         self.tree.heading("status", text="Status")
 
@@ -180,6 +182,7 @@ class App(tk.Tk):
         self.tree.column("location",   width=160, anchor="center")
         self.tree.column("car",        width=70,  anchor="center")
         self.tree.column("driver",     width=100, anchor="center")
+        self.tree.column("ambulance",  width=100, anchor="center")
         self.tree.column("units",      width=140, anchor="center")
         self.tree.column("status",     width=90,  anchor="center")
         self.tree.pack(fill="both", expand=True, side="left")
@@ -227,7 +230,7 @@ class App(tk.Tk):
             tag = 'cleared' if r["is_cleared"] else 'active'
             self.tree.insert("", "end", iid=str(r["id"]), values=(
                 fmt_dt(r["reported_at"]), fmt_dt(r["dispatched_at"]), fmt_dt(r["arrived_at"]), fmt_dt(r["cleared_at"]),
-                r["type"], r["location_name"] or "", r["car_number"] or "", r["driver_code"] or "", units_label, "Cleared" if r["is_cleared"] else "Active"
+                r["type"], r["location_name"] or "", r["car_number"] or "", r["driver_code"] or "", r["ambulance"] or "", units_label, "Cleared" if r["is_cleared"] else "Active"
             ), tags=(tag,))
 
     def reset_filters(self):
@@ -312,6 +315,7 @@ class App(tk.Tk):
             "incident_types": [r["name"] for r in self.db.list_incident_types()],
             "units": [r["name"] for r in self.db.list_units()],
             "driver_codes": [r["name"] for r in self.db.list_driver_codes()],
+            "ambulances": [r["name"] for r in self.db.list_ambulances()],
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -331,7 +335,7 @@ class App(tk.Tk):
             dark_info(self, "Import Failed", f"Could not read file:\n{e}")
             return
 
-        added = {"locations": 0, "incident_types": 0, "units": 0, "driver_codes": 0}
+        added = {"locations": 0, "incident_types": 0, "units": 0, "driver_codes": 0, "ambulances": 0}
         for name in data.get("locations", []):
             if isinstance(name, str) and name.strip():
                 before = len(self.db.list_locations())
@@ -357,9 +361,15 @@ class App(tk.Tk):
                 self.db.add_driver_code(name.strip())
                 if len(self.db.list_driver_codes()) > before:
                     added["driver_codes"] += 1
+        for name in data.get("ambulances", []):
+            if isinstance(name, str) and name.strip():
+                before = len(self.db.list_ambulances())
+                self.db.add_ambulance(name.strip())
+                if len(self.db.list_ambulances()) > before:
+                    added["ambulances"] += 1
 
         dark_info(self, "Import Complete",
-                  f"Added:\n  {added['locations']} location(s)\n  {added['incident_types']} incident type(s)\n  {added['units']} unit(s)\n  {added['driver_codes']} driver code(s)\n\nExisting entries were not duplicated.")
+                  f"Added:\n  {added['locations']} location(s)\n  {added['incident_types']} incident type(s)\n  {added['units']} unit(s)\n  {added['driver_codes']} driver code(s)\n  {added['ambulances']} ambulance(s)\n\nExisting entries were not duplicated.")
 
     def _check_date_rollover(self):
         if not self.winfo_exists():
@@ -399,7 +409,6 @@ class App(tk.Tk):
         dlg = tk.Toplevel(self)
         dlg.withdraw()
         dlg.title("Updating")
-        dlg.resizable(False, False)
         set_window_icon(dlg, "export")
         dlg.after(0, lambda: apply_dark_titlebar(dlg))
         dlg.protocol("WM_DELETE_WINDOW", lambda: None)
@@ -447,7 +456,6 @@ class App(tk.Tk):
         dlg = tk.Toplevel(self)
         dlg.withdraw()
         dlg.title("Export Before Closing?")
-        dlg.resizable(False, False)
         dlg.grab_set()
         set_window_icon(dlg, "export")
         dlg.after(0, lambda: apply_dark_titlebar(dlg))

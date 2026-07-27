@@ -43,6 +43,12 @@ class DB:
                 sort_order INTEGER DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS ambulances (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                sort_order INTEGER DEFAULT 0
+            );
+
             CREATE TABLE IF NOT EXISTS incidents (
                 id INTEGER PRIMARY KEY,
                 location_id INTEGER,
@@ -54,6 +60,7 @@ class DB:
                 disposition TEXT DEFAULT '',
                 car_number TEXT DEFAULT '',
                 driver_code TEXT DEFAULT '',
+                ambulance TEXT DEFAULT '',
                 is_cleared INTEGER DEFAULT 0,
                 FOREIGN KEY(location_id) REFERENCES locations(id)
             );
@@ -94,6 +101,7 @@ class DB:
             "ALTER TABLE units ADD COLUMN sort_order INTEGER DEFAULT 0",
             "ALTER TABLE incidents ADD COLUMN car_number TEXT DEFAULT ''",
             "ALTER TABLE incidents ADD COLUMN driver_code TEXT DEFAULT ''",
+            "ALTER TABLE incidents ADD COLUMN ambulance TEXT DEFAULT ''",
         ]:
             try:
                 cur.execute(stmt)
@@ -104,6 +112,7 @@ class DB:
         cur.execute("UPDATE incident_types SET sort_order = id WHERE sort_order = 0")
         cur.execute("UPDATE units SET sort_order = id WHERE sort_order = 0")
         cur.execute("UPDATE driver_codes SET sort_order = id WHERE sort_order = 0")
+        cur.execute("UPDATE ambulances SET sort_order = id WHERE sort_order = 0")
         self.conn.commit()
 
     # ---- CRUD helpers
@@ -202,7 +211,7 @@ class DB:
 
     def set_sort_order(self, table: str, ordered_ids: list):
         """Assign sort_order 1..N to rows in the given order."""
-        if table not in ("locations", "units", "incident_types", "driver_codes"):
+        if table not in ("locations", "units", "incident_types", "driver_codes", "ambulances"):
             raise ValueError(f"unknown table: {table}")
         cur = self.conn.cursor()
         for idx, row_id in enumerate(ordered_ids, start=1):
@@ -246,18 +255,54 @@ class DB:
         self.conn.execute("DELETE FROM driver_codes WHERE id=?", (code_id,))
         self.conn.commit()
 
+    def list_ambulances(self) -> List[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM ambulances ORDER BY sort_order, id").fetchall()
+
+    def list_ambulances_with_availability(self) -> List[sqlite3.Row]:
+        """Returns all ambulances with a computed `available` column (1=available, 0=unavailable).
+        An ambulance is unavailable when it's set on any active (not-cleared) incident."""
+        return self.conn.execute("""
+            SELECT a.*,
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM incidents i
+                    WHERE i.ambulance = a.name AND i.is_cleared = 0
+                ) THEN 0 ELSE 1 END AS available
+            FROM ambulances a ORDER BY a.sort_order, a.id
+        """).fetchall()
+
+    def add_ambulance(self, name: str):
+        self.conn.execute(
+            "INSERT OR IGNORE INTO ambulances(name, sort_order) "
+            "VALUES(?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM ambulances))",
+            (name.strip(),),
+        )
+        self.conn.commit()
+
+    def rename_ambulance(self, amb_id: int, new_name: str):
+        self.conn.execute("UPDATE ambulances SET name=? WHERE id=?", (new_name.strip(), amb_id))
+        self.conn.commit()
+
+    def ambulance_incident_count(self, amb_name: str) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM incidents WHERE ambulance=?", (amb_name,)
+        ).fetchone()[0]
+
+    def delete_ambulance(self, amb_id: int):
+        self.conn.execute("DELETE FROM ambulances WHERE id=?", (amb_id,))
+        self.conn.commit()
+
     def create_incident(self, location_id: Optional[int], type_name: str, reported_at: str,
                          dispatched_at: str = "", arrived_at: str = "", cleared_at: str = "",
                          disposition: str = "", is_cleared: int = 0,
                          primary_unit_id: Optional[int] = None, backup_unit_ids: Optional[List[int]] = None,
-                         car_number: str = "", driver_code: str = "") -> int:
+                         car_number: str = "", driver_code: str = "", ambulance: str = "") -> int:
         cur = self.conn.cursor()
         cur.execute(
             """
-            INSERT INTO incidents(location_id, type, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, driver_code, is_cleared)
-            VALUES(?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO incidents(location_id, type, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, driver_code, ambulance, is_cleared)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
             """,
-            (location_id, type_name, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, driver_code, is_cleared),
+            (location_id, type_name, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, driver_code, ambulance, is_cleared),
         )
         inc_id = cur.lastrowid
         if primary_unit_id:
@@ -277,11 +322,11 @@ class DB:
     def update_incident(self, inc_id: int, location_id: Optional[int], type_name: str, reported_at: str,
                          dispatched_at: str, arrived_at: str, cleared_at: str, disposition: str, is_cleared: int,
                          primary_unit_id: Optional[int], backup_unit_ids: List[int],
-                         car_number: str = "", driver_code: str = ""):
+                         car_number: str = "", driver_code: str = "", ambulance: str = ""):
         cur = self.conn.cursor()
         cur.execute(
-            "UPDATE incidents SET location_id=?, type=?, reported_at=?, dispatched_at=?, arrived_at=?, cleared_at=?, disposition=?, car_number=?, driver_code=?, is_cleared=? WHERE id=?",
-            (location_id, type_name, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, driver_code, is_cleared, inc_id),
+            "UPDATE incidents SET location_id=?, type=?, reported_at=?, dispatched_at=?, arrived_at=?, cleared_at=?, disposition=?, car_number=?, driver_code=?, ambulance=?, is_cleared=? WHERE id=?",
+            (location_id, type_name, reported_at, dispatched_at, arrived_at, cleared_at, disposition, car_number, driver_code, ambulance, is_cleared, inc_id),
         )
         # reset assignments
         cur.execute("DELETE FROM incident_units WHERE incident_id=?", (inc_id,))

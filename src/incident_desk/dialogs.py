@@ -14,7 +14,6 @@ def dark_info(parent, title: str, message: str) -> None:
     dlg = tk.Toplevel(parent)
     dlg.withdraw()
     dlg.title(title)
-    dlg.resizable(False, False)
     set_window_icon(dlg, "info")
     dlg.after(0, lambda: apply_dark_titlebar(dlg))
 
@@ -42,7 +41,6 @@ def dark_confirm(parent, title: str, message: str, *,
     dlg = tk.Toplevel(parent)
     dlg.withdraw()
     dlg.title(title)
-    dlg.resizable(False, False)
     set_window_icon(dlg, icon_key)
     dlg.after(0, lambda: apply_dark_titlebar(dlg))
 
@@ -80,7 +78,6 @@ def ask_for_text(parent, title: str, initial: str = "") -> Optional[str]:
     dlg = tk.Toplevel(parent)
     dlg.withdraw()
     dlg.title(title)
-    dlg.resizable(False, False)
     set_window_icon(dlg, "input")
     dlg.after(0, lambda: apply_dark_titlebar(dlg))
 
