@@ -13,7 +13,7 @@ All data is exportable as PDF.
 Allows the race track to keep a database of on track incidents for future reference.
 Database is built and utilized locally after the first run.
 
-Originally designed for the dispatch and safety team at Road America.
+Designed for the dispatch, safety and security teams at Road America.
 
 # Installation Guide
 1. Navigate to the latest release and the right side menu
