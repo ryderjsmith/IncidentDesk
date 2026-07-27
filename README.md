@@ -1,7 +1,7 @@
 # Incident Desk
 Simple offline incident logging app 
 
-Built with Python and SQLite
+Built with Python
 
 Users can log and track daily incidents that occur on track.
 Incidents can be sorted and filtered based on type or date.
